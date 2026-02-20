@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import re
@@ -34,7 +35,7 @@ class IngestionService:
         summary: dict[str, Any] = {"docs_total": 0, "docs_ingested": 0, "docs_skipped": 0, "docs": []}
 
         for pdf_file in sorted(Path(input_dir).glob("*.pdf")):
-            spec = manifest.get(pdf_file.name)
+            spec = self._find_manifest_spec(pdf_file, manifest)
             if not spec:
                 log.warning("Skipping %s: no manifest record", pdf_file.name)
                 continue
@@ -86,6 +87,7 @@ class IngestionService:
             year=meta.get("year"),
             specialty=meta.get("specialty"),
             source_url=meta.get("source_url"),
+            metadata_json=json.dumps(meta, ensure_ascii=False),
             hash=doc_hash,
         )
         self.store.upsert_document(doc)
@@ -133,25 +135,96 @@ class IngestionService:
         )
         return result
 
-    def _load_manifest(self, path: Path) -> dict[str, dict[str, Any]]:
-        data = json.loads(path.read_text(encoding="utf-8"))
+    def _find_manifest_spec(self, pdf_file: Path, manifest: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+        direct = manifest.get(pdf_file.name) or manifest.get(pdf_file.stem)
+        if direct:
+            return direct
+        for spec in manifest.values():
+            if str(spec.get("doc_id") or "").strip() == pdf_file.stem:
+                return spec
+        return None
+
+    def _normalize_manifest_row(self, row: dict[str, Any], fallback_doc_id: str | None = None) -> dict[str, Any]:
+        doc_id = str(row.get("doc_id") or row.get("ID") or row.get("id") or fallback_doc_id or "").strip()
+        title = row.get("title") or row.get("Наименование")
+        year = self._to_int_or_none(row.get("year"))
+        specialty = row.get("specialty")
+        source_url = row.get("source_url")
+
+        out = dict(row)
+        out["doc_id"] = doc_id
+        if title:
+            out["title"] = title
+        if year:
+            out["year"] = year
+        if specialty:
+            out["specialty"] = specialty
+        if source_url:
+            out["source_url"] = source_url
+        return out
+
+    def _to_int_or_none(self, value: Any) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, str):
+            stripped = value.strip()
+            if not stripped:
+                return None
+            if stripped.isdigit():
+                return int(stripped)
+            return None
+        return None
+
+    def _load_manifest_from_json(self, data: Any) -> dict[str, dict[str, Any]]:
         if isinstance(data, list):
-            out = {}
+            out: dict[str, dict[str, Any]] = {}
             for row in data:
-                filename = row.get("filename") or row.get("file")
-                if filename:
-                    out[str(filename)] = row
+                filename = str(row.get("filename") or row.get("file") or "").strip()
+                if not filename:
+                    continue
+                out[filename] = self._normalize_manifest_row(row, fallback_doc_id=Path(filename).stem)
             return out
         if isinstance(data, dict):
             if "documents" in data and isinstance(data["documents"], list):
-                out = {}
+                out: dict[str, dict[str, Any]] = {}
                 for row in data["documents"]:
-                    filename = row.get("filename") or row.get("file")
-                    if filename:
-                        out[str(filename)] = row
+                    filename = str(row.get("filename") or row.get("file") or "").strip()
+                    if not filename:
+                        continue
+                    out[filename] = self._normalize_manifest_row(row, fallback_doc_id=Path(filename).stem)
                 return out
-            return {str(k): v for k, v in data.items()}
-        raise ValueError("Unsupported manifest format")
+            out: dict[str, dict[str, Any]] = {}
+            for key, value in data.items():
+                if not isinstance(value, dict):
+                    continue
+                key_s = str(key).strip()
+                out[key_s] = self._normalize_manifest_row(value, fallback_doc_id=Path(key_s).stem)
+            return out
+        raise ValueError("Unsupported manifest JSON format")
+
+    def _load_manifest_from_csv(self, path: Path) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        with path.open("r", encoding="utf-8-sig", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                row = {str(k).strip(): v for k, v in row.items() if k is not None}
+                filename = str(row.get("filename") or row.get("file") or "").strip()
+                doc_id = str(row.get("doc_id") or row.get("ID") or row.get("id") or "").strip()
+                if not filename and doc_id:
+                    filename = f"{doc_id}.pdf"
+                if not filename:
+                    continue
+                out[filename] = self._normalize_manifest_row(row, fallback_doc_id=Path(filename).stem)
+        return out
+
+    def _load_manifest(self, path: Path) -> dict[str, dict[str, Any]]:
+        if path.suffix.lower() == ".csv":
+            return self._load_manifest_from_csv(path)
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return self._load_manifest_from_json(data)
 
     def _extract_pages(self, pdf_path: Path) -> list[dict[str, Any]]:
         import fitz

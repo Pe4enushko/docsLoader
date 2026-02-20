@@ -32,6 +32,7 @@ class Document:
     year: int | None = None
     specialty: str | None = None
     source_url: str | None = None
+    metadata_json: str | None = None
     hash: str | None = None
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 

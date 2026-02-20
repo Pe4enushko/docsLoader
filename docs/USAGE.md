@@ -35,9 +35,19 @@ Edit constants directly inside scripts before running.
 
 - `init_knowledge_graph.py`
   - `INPUT_PDF_DIR`
-  - `MANIFEST_PATH`
+  - `MANIFEST_PATH` (`.json` or `.csv`)
   - `CHECKPOINT_FILE`
   - `LOG_FILE`
+
+CSV manifest notes:
+
+- If `filename`/`file` is present, that value is used to match PDF files in `INPUT_PDF_DIR`.
+- If `filename` is missing but `ID` is present, ingestion assumes file name `<ID>.pdf`.
+- Supported CSV metadata aliases:
+  - `ID` -> `doc_id`
+  - `Наименование` -> `title`
+  - `doc_id`, `title`, `year`, `specialty`, `source_url` are also accepted directly.
+- All manifest row fields are stored on `Document.metadata_json` (JSON string).
 
 - `validate_appointment_pipeline.py`
   - `DOC_ID_OR_MKB_CODE`

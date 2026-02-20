@@ -7,6 +7,7 @@ from urllib.parse import urlparse
 
 import weaviate
 from langchain_ollama import OllamaEmbeddings
+from weaviate.exceptions import WeaviateInvalidInputError
 from weaviate.classes.config import Configure, DataType, Property
 
 from .config import Settings
@@ -46,11 +47,15 @@ class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin, WeaviateDeleti
 
     def _connect(self):
         parsed = urlparse(self.settings.weaviate_url)
+        grpc_parsed = urlparse("http://localhost:50051")
         # Local/self-hosted Weaviate only.
         return weaviate.connect_to_custom(
             http_host=parsed.hostname or "localhost",
             http_port=parsed.port or (443 if parsed.scheme == "https" else 80),
             http_secure=parsed.scheme == "https",
+            grpc_host=grpc_parsed.hostname or "localhost",
+            grpc_port=grpc_parsed.port or 50051,
+            grpc_secure=grpc_parsed.scheme == "https",
         )
 
     def _ensure_schema(self) -> None:
@@ -62,6 +67,7 @@ class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin, WeaviateDeleti
                 Property(name="year", data_type=DataType.INT),
                 Property(name="specialty", data_type=DataType.TEXT),
                 Property(name="source_url", data_type=DataType.TEXT),
+                Property(name="metadata_json", data_type=DataType.TEXT),
                 Property(name="hash", data_type=DataType.TEXT),
                 Property(name="created_at", data_type=DataType.DATE),
             ],
@@ -136,6 +142,18 @@ class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin, WeaviateDeleti
 
     def _ensure_collection(self, name: str, properties: list[Property]) -> None:
         if self.client.collections.exists(name):
+            collection = self.client.collections.get(name)
+            current = collection.config.get(simple=True)
+            current_names = {p.name for p in current.properties}
+            for prop in properties:
+                if prop.name in current_names:
+                    continue
+                try:
+                    collection.config.add_property(prop)
+                    log.info("Added missing property collection=%s property=%s", name, prop.name)
+                except WeaviateInvalidInputError:
+                    # Property could have been added concurrently by another process.
+                    pass
             return
         self.client.collections.create(
             name=name,

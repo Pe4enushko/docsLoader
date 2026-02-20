@@ -10,7 +10,7 @@ from graphrag_weaviate.storage import WeaviateGraphStore
 
 # Edit values below before running.
 INPUT_PDF_DIR = "./pdfs"
-MANIFEST_PATH = "./manifest.json"
+MANIFEST_PATH = "./manifest.csv"  # Supports .csv and .json
 CHECKPOINT_FILE = ".graphrag_ingest_checkpoint.json"
 LOG_FILE = "logs/init_knowledge_graph.log"
 

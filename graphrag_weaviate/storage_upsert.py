@@ -30,11 +30,21 @@ class WeaviateUpsertMixin:
             "year": doc.year,
             "specialty": doc.specialty,
             "source_url": doc.source_url,
+            "metadata_json": doc.metadata_json,
             "hash": doc.hash,
             "created_at": doc.created_at.astimezone(timezone.utc).isoformat(),
         }
         log.info("Upsert document doc_id=%s", doc.doc_id)
-        return self._put(self.DOCS, object_uuid, properties)
+        try:
+            return self._put(self.DOCS, object_uuid, properties)
+        except Exception as exc:
+            # Backward compatibility with existing collections created before metadata_json was added.
+            if "metadata_json" not in str(exc):
+                raise
+            fallback = dict(properties)
+            fallback.pop("metadata_json", None)
+            log.warning("Document collection has no metadata_json property yet; storing without it")
+            return self._put(self.DOCS, object_uuid, fallback)
 
     def upsert_section(self, section: Section) -> str:
         section_id = section.section_id or stable_hash(f"{section.doc_id}|{section.path}")
