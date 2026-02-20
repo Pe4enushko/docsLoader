@@ -1,0 +1,12 @@
+{
+  "patient_id": "P-001",
+  "age": 62,
+  "sex": "female",
+  "diagnosis": "chronic heart failure",
+  "doctor_verdict": "Start ACE inhibitor and monitor renal labs in 2 weeks",
+  "recommendations": [
+    "ACE inhibitor initiation",
+    "lab monitoring"
+  ],
+  "query": "Patient with chronic heart failure. Doctor recommends ACE inhibitor and renal monitoring in 2 weeks. Validate this plan against guideline."
+}

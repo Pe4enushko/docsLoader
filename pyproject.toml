@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "graphrag-weaviate"
+version = "0.1.0"
+description = "GraphRAG library for medical guideline retrieval with Weaviate + Ollama embeddings"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+  "weaviate-client>=4.10.0",
+  "langchain-ollama>=0.2.0",
+  "pymupdf>=1.24.0",
+  "python-dotenv>=1.0.1",
+]
+
+[project.scripts]
+docs-graphrag = "graphrag_weaviate.cli:main"
+
+[tool.setuptools]
+packages = ["graphrag_weaviate"]
