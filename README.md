@@ -8,12 +8,18 @@ Human-readable overview: `docs/HOW_IT_WORKS.md`.
 
 ## Top-Level Scripts
 
-- `docsToGraphRAG.py`
-  - Main production entrypoint. Judge-only execution.
+- `evaluateVerdict.py`
+  - Judge-only verdict evaluation entrypoint.
+  - Details: `docs/scripts/evaluate_verdict.md`
 - `validate_appointment_pipeline.py`
   - Extended structured API-payload validation flow (used for integration/testing scenarios).
+  - Details: `docs/scripts/validate_appointment_pipeline.md`
 - `init_knowledge_graph.py`
   - Knowledge graph ingestion helper (run separately, typically for setup/testing).
+  - Details: `docs/scripts/init_knowledge_graph.md`
+- `reset_graph_rag.py`
+  - Destructive reset helper: removes GraphRAG collections from Weaviate and clears ingestion checkpoint.
+  - Details: `docs/scripts/reset_graph_rag.md`
 
 ## Environment
 

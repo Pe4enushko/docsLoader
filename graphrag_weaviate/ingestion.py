@@ -33,16 +33,23 @@ class IngestionService:
         manifest = self._load_manifest(Path(manifest_path))
         checkpoint = load_json(self.checkpoint_path)
         summary: dict[str, Any] = {"docs_total": 0, "docs_ingested": 0, "docs_skipped": 0, "docs": []}
+        input_dir_path = Path(input_dir)
+        used_pdf_names: set[str] = set()
 
-        for pdf_file in sorted(Path(input_dir).glob("*.pdf")):
-            spec = self._find_manifest_spec(pdf_file, manifest)
-            if not spec:
-                log.warning("Skipping %s: no manifest record", pdf_file.name)
+        for manifest_key, spec in sorted(manifest.items(), key=lambda kv: str(kv[1].get("doc_id") or kv[0])):
+            doc_id = str(spec.get("doc_id") or "").strip()
+            if not doc_id:
+                log.warning("Skipping manifest record %s: empty doc_id", manifest_key)
                 continue
+            pdf_file = self._resolve_pdf_file(input_dir_path, manifest_key, spec)
+            if not pdf_file:
+                log.warning("Skipping doc_id=%s: no matching PDF found in %s", doc_id, input_dir)
+                continue
+            used_pdf_names.add(pdf_file.name)
             summary["docs_total"] += 1
-            doc_id = str(spec["doc_id"])
             if checkpoint.get(doc_id) == "done":
                 summary["docs_skipped"] += 1
+                log.info("Skipping doc_id=%s: already marked done in checkpoint", doc_id)
                 continue
             one = self.ingest_document(pdf_file, spec)
             summary["docs"].append(one)
@@ -53,6 +60,10 @@ class IngestionService:
             else:
                 summary["docs_skipped"] += 1
 
+        for pdf_file in sorted(input_dir_path.glob("*.pdf")):
+            if pdf_file.name not in used_pdf_names:
+                log.warning("Ignoring %s: no manifest record", pdf_file.name)
+
         summary["runtime_sec"] = round(time.time() - started, 3)
         log.info(
             "Ingestion finished docs_total=%d docs_ingested=%d docs_skipped=%d runtime_sec=%.3f",
@@ -62,6 +73,31 @@ class IngestionService:
             summary["runtime_sec"],
         )
         return summary
+
+    def _resolve_pdf_file(self, input_dir: Path, manifest_key: str, spec: dict[str, Any]) -> Path | None:
+        candidates: list[str] = []
+        doc_id = str(spec.get("doc_id") or "").strip()
+        if doc_id:
+            candidates.append(f"{doc_id}.pdf")
+        explicit = str(spec.get("filename") or spec.get("file") or "").strip()
+        if explicit:
+            candidates.append(explicit)
+        key = str(manifest_key).strip()
+        if key:
+            candidates.append(key)
+            if not key.lower().endswith(".pdf"):
+                candidates.append(f"{key}.pdf")
+
+        seen: set[str] = set()
+        for candidate in candidates:
+            normalized = candidate.strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            path = input_dir / normalized
+            if path.is_file() and path.suffix.lower() == ".pdf":
+                return path
+        return None
 
     def ingest_document(self, pdf_path: Path, meta: dict[str, Any]) -> dict[str, Any]:
         t0 = time.time()

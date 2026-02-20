@@ -7,7 +7,7 @@ from typing import Any
 import weaviate
 from weaviate.classes.query import Filter
 
-from .models import Chunk, Document, Entity, Recommendation, Section
+from .models import Chunk, Document, Recommendation, Section
 from .utils import stable_hash
 
 log = logging.getLogger(__name__)
@@ -35,16 +35,7 @@ class WeaviateUpsertMixin:
             "created_at": doc.created_at.astimezone(timezone.utc).isoformat(),
         }
         log.info("Upsert document doc_id=%s", doc.doc_id)
-        try:
-            return self._put(self.DOCS, object_uuid, properties)
-        except Exception as exc:
-            # Backward compatibility with existing collections created before metadata_json was added.
-            if "metadata_json" not in str(exc):
-                raise
-            fallback = dict(properties)
-            fallback.pop("metadata_json", None)
-            log.warning("Document collection has no metadata_json property yet; storing without it")
-            return self._put(self.DOCS, object_uuid, fallback)
+        return self._upsert_object(self.DOCS, object_uuid, properties)
 
     def upsert_section(self, section: Section) -> str:
         section_id = section.section_id or stable_hash(f"{section.doc_id}|{section.path}")
@@ -59,24 +50,13 @@ class WeaviateUpsertMixin:
             "page_end": section.page_end,
             "document_id": self._uuid(f"document:{section.doc_id}"),
         }
-        self._put(self.SECTIONS, object_uuid, properties)
+        self._upsert_object(self.SECTIONS, object_uuid, properties)
         log.info("Upsert section doc_id=%s path=%s", section.doc_id, section.path)
         return section_id
 
     def upsert_chunk(self, chunk: Chunk, embedding: list[float] | None = None) -> str:
         chunk_hash = chunk.chunk_hash or stable_hash(chunk.chunk_text)
-        maybe_existing = self.client.collections.get(self.CHUNKS).query.fetch_objects(
-            filters=Filter.all_of([
-                Filter.by_property("doc_id").equal(chunk.doc_id),
-                Filter.by_property("chunk_hash").equal(chunk_hash),
-            ]),
-            limit=1,
-        )
         chunk_id = chunk.chunk_id or stable_hash(f"{chunk.doc_id}|{chunk.section_path}|{chunk.page_start}|{chunk_hash}")
-        if maybe_existing.objects:
-            existing = maybe_existing.objects[0]
-            if existing.properties.get("chunk_id"):
-                return str(existing.properties["chunk_id"])
 
         object_uuid = self._uuid(f"chunk:{chunk_id}")
         properties = {
@@ -94,62 +74,32 @@ class WeaviateUpsertMixin:
             "chunk_hash": chunk_hash,
             "entity_mentions": chunk.entity_mentions,
         }
-        self._put(self.CHUNKS, object_uuid, properties, vector=embedding)
+        self._upsert_object(self.CHUNKS, object_uuid, properties, vector=embedding)
         log.info("Upsert chunk doc_id=%s chunk_id=%s", chunk.doc_id, chunk_id)
         return chunk_id
 
     def link_chunk_to_section(self, chunk_id: str, section_id: str) -> None:
         chunk_uuid = self._uuid(f"chunk:{chunk_id}")
         collection = self.client.collections.get(self.CHUNKS)
-        obj = collection.query.fetch_object_by_id(chunk_uuid)
-        props = obj.properties if obj else {}
-        props["section_id"] = section_id
-        collection.data.replace(chunk_uuid, properties=props)
+        collection.data.update(chunk_uuid, properties={"section_id": section_id})
         log.info("Linked chunk->section chunk_id=%s section_id=%s", chunk_id, section_id)
 
     def link_chunk_to_document(self, chunk_id: str, doc_id: str) -> None:
         chunk_uuid = self._uuid(f"chunk:{chunk_id}")
         collection = self.client.collections.get(self.CHUNKS)
-        obj = collection.query.fetch_object_by_id(chunk_uuid)
-        props = obj.properties if obj else {}
-        props["document_id"] = self._uuid(f"document:{doc_id}")
-        props["doc_id"] = doc_id
-        collection.data.replace(chunk_uuid, properties=props)
-        log.info("Linked chunk->document chunk_id=%s doc_id=%s", chunk_id, doc_id)
-
-    def upsert_entity(self, entity: Entity, doc_id: str) -> str:
-        entity_id = stable_hash(f"{doc_id}|{entity.type}|{entity.name.lower()}")
-        entity_uuid = self._uuid(f"entity:{entity_id}")
-        self._put(
-            self.ENTITIES,
-            entity_uuid,
-            {
-                "entity_id": entity_id,
-                "name": entity.name,
-                "type": entity.type,
-                "aliases": entity.aliases,
+        collection.data.update(
+            chunk_uuid,
+            properties={
+                "document_id": self._uuid(f"document:{doc_id}"),
                 "doc_id": doc_id,
-                "chunk_ids": [],
             },
         )
-        return entity_id
-
-    def link_entity_to_chunk(self, entity_id: str, chunk_id: str) -> None:
-        entity_uuid = self._uuid(f"entity:{entity_id}")
-        collection = self.client.collections.get(self.ENTITIES)
-        obj = collection.query.fetch_object_by_id(entity_uuid)
-        if not obj:
-            return
-        props = obj.properties
-        chunk_ids = set(props.get("chunk_ids") or [])
-        chunk_ids.add(chunk_id)
-        props["chunk_ids"] = list(chunk_ids)
-        collection.data.replace(entity_uuid, properties=props)
+        log.info("Linked chunk->document chunk_id=%s doc_id=%s", chunk_id, doc_id)
 
     def upsert_recommendation(self, rec: Recommendation, doc_id: str) -> str:
         rec_id = stable_hash(f"{doc_id}|{rec.statement}")
         rec_uuid = self._uuid(f"recommendation:{rec_id}")
-        self._put(
+        self._upsert_object(
             self.RECS,
             rec_uuid,
             {
@@ -174,8 +124,7 @@ class WeaviateUpsertMixin:
         props = obj.properties
         chunk_ids = set(props.get("chunk_ids") or [])
         chunk_ids.add(chunk_id)
-        props["chunk_ids"] = list(chunk_ids)
-        collection.data.replace(rec_uuid, properties=props)
+        collection.data.update(rec_uuid, properties={"chunk_ids": list(chunk_ids)})
 
     def store_verdict_evaluation(
         self,
@@ -188,7 +137,7 @@ class WeaviateUpsertMixin:
         created_at = datetime.now(timezone.utc).isoformat()
         eval_id = stable_hash(f"{doc_id}|{verdict_text}|{created_at}")
         eval_uuid = self._uuid(f"evaluation:{eval_id}")
-        self._put(
+        self._upsert_object(
             self.EVALS,
             eval_uuid,
             {

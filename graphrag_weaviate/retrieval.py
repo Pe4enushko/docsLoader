@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import re
 from collections import defaultdict
-from typing import Any
 
 from .config import Settings
 from .models import ChunkRecord, ChunkType
@@ -16,18 +15,6 @@ class RetrievalService:
     def __init__(self, store: WeaviateGraphStore, settings: Settings):
         self.store = store
         self.settings = settings
-
-    def search_chunks(self, doc_id: str, query: str, filters: dict[str, Any] | None, top_k: int) -> list[ChunkRecord]:
-        return self.store.search_chunks(doc_id=doc_id, query=query, filters=filters, top_k=top_k)
-
-    def hybrid_search_chunks(self, doc_id: str, query: str, top_k_vector: int, top_k_bm25: int) -> list[ChunkRecord]:
-        return self.store.hybrid_search_chunks(
-            doc_id=doc_id,
-            query=query,
-            top_k_vector=top_k_vector,
-            top_k_bm25=top_k_bm25,
-            filters=None,
-        )
 
     def rerank(self, query: str, candidates: list[ChunkRecord]) -> list[ChunkRecord]:
         query_terms = self._terms(query)
@@ -121,25 +108,12 @@ class RetrievalService:
         self,
         doc_id: str,
         query: str,
-        section_prefix: str | None = None,
-        chunk_type_allowlist: list[str] | None = None,
-        page_range: tuple[int, int] | None = None,
     ) -> list[ChunkRecord]:
         log.info("Retrieve context start doc_id=%s query_len=%d", doc_id, len(query))
-        filters: dict[str, Any] = {}
-        if section_prefix:
-            filters["section_prefix"] = section_prefix
-        if chunk_type_allowlist:
-            filters["chunk_type_allowlist"] = chunk_type_allowlist
-        if page_range:
-            filters["page_range"] = page_range
-
         candidates = self.store.hybrid_search_chunks(
             doc_id=doc_id,
             query=query,
-            top_k_vector=self.settings.k_initial,
-            top_k_bm25=self.settings.k_initial,
-            filters=filters,
+            limit=self.settings.k_initial,
         )[: self.settings.k_initial]
         log.info("Retrieve context candidates=%d", len(candidates))
 

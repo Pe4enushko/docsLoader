@@ -28,21 +28,24 @@ INGEST_CHECKPOINT_FILE=.graphrag_ingest_checkpoint.json
 
 Edit constants directly inside scripts before running.
 
-- `docsToGraphRAG.py` (main program, judge-only)
+- `evaluateVerdict.py` (judge-only)
   - `DOC_ID_OR_MKB_CODE`
   - `VERDICT_TEXT`
   - `LOG_FILE`
+  - Details: `docs/scripts/evaluate_verdict.md`
 
 - `init_knowledge_graph.py`
   - `INPUT_PDF_DIR`
   - `MANIFEST_PATH` (`.json` or `.csv`)
   - `CHECKPOINT_FILE`
   - `LOG_FILE`
+  - Details: `docs/scripts/init_knowledge_graph.md`
 
 CSV manifest notes:
 
-- If `filename`/`file` is present, that value is used to match PDF files in `INPUT_PDF_DIR`.
-- If `filename` is missing but `ID` is present, ingestion assumes file name `<ID>.pdf`.
+- Ingestion iterates manifest records and first tries PDF `<doc_id>.pdf` (for example `1021_1.pdf`).
+- If `filename`/`file` is present, it is also accepted as a fallback matcher.
+- Manifest key name is also accepted as a fallback (`<key>` or `<key>.pdf`).
 - Supported CSV metadata aliases:
   - `ID` -> `doc_id`
   - `Наименование` -> `title`
@@ -54,6 +57,13 @@ CSV manifest notes:
   - `API_INPUT_JSON_PATH`
   - `CONTEXT_TARGET`
   - `LOG_FILE`
+  - Details: `docs/scripts/validate_appointment_pipeline.md`
+
+- `reset_graph_rag.py` (destructive reset utility)
+  - `COLLECTIONS`
+  - `CHECKPOINT_FILE`
+  - `LOG_FILE`
+  - Details: `docs/scripts/reset_graph_rag.md`
 
 ## 4. Run ingestion
 
@@ -65,6 +75,14 @@ python3 init_knowledge_graph.py
 
 ```bash
 python3 validate_appointment_pipeline.py
+```
+
+## Optional: full GraphRAG reset
+
+Deletes all GraphRAG collections in Weaviate and removes ingestion checkpoint file.
+
+```bash
+python3 reset_graph_rag.py
 ```
 
 Output contract (`evaluation`) is strictly structured via LangChain `with_structured_output`:
@@ -88,7 +106,7 @@ Output contract (`evaluation`) is strictly structured via LangChain `with_struct
 ## 6. Main program (judge-only)
 
 ```bash
-python3 docsToGraphRAG.py
+python3 evaluateVerdict.py
 ```
 
 ## 7. Logging behavior

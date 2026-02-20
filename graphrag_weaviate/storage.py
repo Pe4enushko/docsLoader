@@ -12,18 +12,16 @@ from weaviate.classes.config import Configure, DataType, Property
 
 from .config import Settings
 from .models import ChunkRecord, ChunkType
-from .storage_deletion import WeaviateDeletionMixin
 from .storage_queries import WeaviateQueryMixin
 from .storage_upsert import WeaviateUpsertMixin
 
 log = logging.getLogger(__name__)
 
 
-class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin, WeaviateDeletionMixin):
+class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin):
     DOCS = "Document"
     SECTIONS = "Section"
     CHUNKS = "Chunk"
-    ENTITIES = "Entity"
     RECS = "Recommendation"
     EVALS = "VerdictEvaluation"
 
@@ -51,7 +49,7 @@ class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin, WeaviateDeleti
         # Local/self-hosted Weaviate only.
         return weaviate.connect_to_custom(
             http_host=parsed.hostname or "localhost",
-            http_port=parsed.port or (443 if parsed.scheme == "https" else 80),
+            http_port=8080,
             http_secure=parsed.scheme == "https",
             grpc_host=grpc_parsed.hostname or "localhost",
             grpc_port=grpc_parsed.port or 50051,
@@ -104,17 +102,6 @@ class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin, WeaviateDeleti
             ],
         )
         self._ensure_collection(
-            self.ENTITIES,
-            [
-                Property(name="entity_id", data_type=DataType.TEXT),
-                Property(name="name", data_type=DataType.TEXT),
-                Property(name="type", data_type=DataType.TEXT),
-                Property(name="aliases", data_type=DataType.TEXT_ARRAY),
-                Property(name="doc_id", data_type=DataType.TEXT),
-                Property(name="chunk_ids", data_type=DataType.TEXT_ARRAY),
-            ],
-        )
-        self._ensure_collection(
             self.RECS,
             [
                 Property(name="recommendation_id", data_type=DataType.TEXT),
@@ -164,14 +151,19 @@ class WeaviateGraphStore(WeaviateUpsertMixin, WeaviateQueryMixin, WeaviateDeleti
     def _uuid(self, key: str) -> str:
         return str(uuid.uuid5(uuid.NAMESPACE_DNS, key))
 
-    def _put(self, collection_name: str, object_uuid: str, properties: dict[str, Any], vector: list[float] | None = None) -> str:
+    def _upsert_object(
+        self,
+        collection_name: str,
+        object_uuid: str,
+        properties: dict[str, Any],
+        vector: list[float] | None = None,
+    ) -> str:
         collection = self.client.collections.get(collection_name)
-        try:
-            collection.data.insert(uuid=object_uuid, properties=properties, vector=vector)
-            return object_uuid
-        except Exception:
+        if collection.data.exists(object_uuid):
             collection.data.replace(uuid=object_uuid, properties=properties, vector=vector)
-            return object_uuid
+        else:
+            collection.data.insert(uuid=object_uuid, properties=properties, vector=vector)
+        return object_uuid
 
     def _to_chunk_record(self, obj: Any, source: str) -> ChunkRecord:
         props = obj.properties

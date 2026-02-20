@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import weaviate
 from weaviate.classes.query import Filter, MetadataQuery
@@ -12,71 +11,21 @@ log = logging.getLogger(__name__)
 
 
 class WeaviateQueryMixin:
-    def search_chunks(self, doc_id: str, query: str, filters: dict[str, Any] | None, top_k: int) -> list[ChunkRecord]:
+    def hybrid_search_chunks(self, doc_id: str, query: str, limit: int) -> list[ChunkRecord]:
         log.debug("Using Weaviate for retrieval, version=%s", getattr(weaviate, "__version__", "unknown"))
         collection = self.client.collections.get(self.CHUNKS)
-        cond = [Filter.by_property("doc_id").equal(doc_id)]
-        if filters:
-            if filters.get("section_prefix"):
-                cond.append(Filter.by_property("section_path").like(f"{filters['section_prefix']}*"))
-            if filters.get("chunk_type_allowlist"):
-                cond.append(Filter.by_property("chunk_type").contains_any(filters["chunk_type_allowlist"]))
-            if filters.get("page_range"):
-                page_start, page_end = filters["page_range"]
-                cond.append(Filter.by_property("page_start").greater_or_equal(page_start))
-                cond.append(Filter.by_property("page_end").less_or_equal(page_end))
-
-        log.info("BM25 search doc_id=%s top_k=%d", doc_id, top_k)
-        response = collection.query.bm25(
-            query=query,
-            filters=Filter.all_of(cond),
-            limit=top_k,
-            return_metadata=MetadataQuery(score=True),
-        )
-        return [self._to_chunk_record(o, source="bm25") for o in response.objects]
-
-    def hybrid_search_chunks(
-        self,
-        doc_id: str,
-        query: str,
-        top_k_vector: int,
-        top_k_bm25: int,
-        filters: dict[str, Any] | None = None,
-    ) -> list[ChunkRecord]:
-        bm25 = self.search_chunks(doc_id=doc_id, query=query, filters=filters, top_k=top_k_bm25)
-
-        collection = self.client.collections.get(self.CHUNKS)
-        cond = [Filter.by_property("doc_id").equal(doc_id)]
-        if filters:
-            if filters.get("section_prefix"):
-                cond.append(Filter.by_property("section_path").like(f"{filters['section_prefix']}*"))
-            if filters.get("chunk_type_allowlist"):
-                cond.append(Filter.by_property("chunk_type").contains_any(filters["chunk_type_allowlist"]))
-            if filters.get("page_range"):
-                page_start, page_end = filters["page_range"]
-                cond.append(Filter.by_property("page_start").greater_or_equal(page_start))
-                cond.append(Filter.by_property("page_end").less_or_equal(page_end))
-
+        where = Filter.by_property("doc_id").equal(doc_id)
         vector = self.embed_text(query)
-        vector_resp = collection.query.near_vector(
-            near_vector=vector,
-            filters=Filter.all_of(cond),
-            limit=top_k_vector,
-            return_metadata=MetadataQuery(distance=True),
+        log.info("Hybrid search doc_id=%s limit=%d", doc_id, limit)
+        response = collection.query.hybrid(
+            query=query,
+            vector=vector,
+            alpha=0.5,
+            filters=where,
+            limit=limit,
+            return_metadata=MetadataQuery(score=True, distance=True),
         )
-        vector_hits = [self._to_chunk_record(o, source="vector") for o in vector_resp.objects]
-
-        merged: dict[str, ChunkRecord] = {}
-        for rec in bm25 + vector_hits:
-            current = merged.get(rec.chunk_id)
-            if current is None:
-                merged[rec.chunk_id] = rec
-                continue
-            current.score = max(current.score, rec.score)
-            if current.source != rec.source:
-                current.source = "hybrid"
-
-        out = sorted(merged.values(), key=lambda x: x.score, reverse=True)
+        out = [self._to_chunk_record(o, source="hybrid") for o in response.objects]
         log.info("Hybrid search doc_id=%s candidates=%d", doc_id, len(out))
         return out
 
