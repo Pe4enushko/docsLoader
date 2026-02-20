@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "graphrag-weaviate"
 version = "0.1.0"
-description = "GraphRAG library for medical guideline retrieval with Weaviate + Ollama embeddings"
+description = "Internal pipeline for validating Russian clinic appointment data against MKB-scoped clinical recommendations"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [

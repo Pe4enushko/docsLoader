@@ -10,7 +10,9 @@ from .config import Settings
 
 
 def _base_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="GraphRAG for medical guidelines (Weaviate + Ollama)")
+    parser = argparse.ArgumentParser(
+        description="Pipeline for validating appointment data in Russian clinics using MKB-scoped clinical recommendations"
+    )
     parser.add_argument("--weaviate-url", default=None)
     parser.add_argument("--weaviate-api-key", default=None)
     parser.add_argument("--ollama-embed-model", default=None)
@@ -28,7 +30,9 @@ def _base_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--checkpoint", default=None)
 
     query = sub.add_parser("query", help="Retrieve packed chunks")
-    query.add_argument("--doc_id", required=True)
+    query_doc = query.add_mutually_exclusive_group(required=True)
+    query_doc.add_argument("--doc_id")
+    query_doc.add_argument("--mkb_code")
     query.add_argument("--text", required=True)
     query.add_argument("--section_prefix", default=None)
     query.add_argument("--chunk_types", default=None, help="comma-separated allowlist")
@@ -36,7 +40,9 @@ def _base_parser() -> argparse.ArgumentParser:
     query.add_argument("--page_end", type=int, default=None)
 
     judge = sub.add_parser("judge", help="Evaluate doctor verdict")
-    judge.add_argument("--doc_id", required=True)
+    judge_doc = judge.add_mutually_exclusive_group(required=True)
+    judge_doc.add_argument("--doc_id")
+    judge_doc.add_argument("--mkb_code")
     judge.add_argument("--verdict", required=True)
 
     return parser
@@ -102,12 +108,13 @@ def main() -> None:
             print(json.dumps(summary, ensure_ascii=False, indent=2))
 
         elif args.cmd == "query":
+            doc_id = args.doc_id or args.mkb_code
             page_range = None
             if args.page_start is not None and args.page_end is not None:
                 page_range = (args.page_start, args.page_end)
             chunk_types = [x.strip() for x in args.chunk_types.split(",")] if args.chunk_types else None
             packed = retrieval.retrieve_context(
-                doc_id=args.doc_id,
+                doc_id=doc_id,
                 query=args.text,
                 section_prefix=args.section_prefix,
                 chunk_type_allowlist=chunk_types,
@@ -116,7 +123,7 @@ def main() -> None:
             print(
                 json.dumps(
                     {
-                        "doc_id": args.doc_id,
+                        "doc_id": doc_id,
                         "query": args.text,
                         "count": len(packed),
                         "chunks": [_chunk_to_output(c) for c in packed],
@@ -128,12 +135,13 @@ def main() -> None:
             )
 
         elif args.cmd == "judge":
+            doc_id = args.doc_id or args.mkb_code
             judge = VerdictJudge(store, retrieval, settings)
-            result = judge.evaluate_verdict(doc_id=args.doc_id, verdict_text=args.verdict)
+            result = judge.evaluate_verdict(doc_id=doc_id, verdict_text=args.verdict)
             print(
                 json.dumps(
                     {
-                        "doc_id": args.doc_id,
+                        "doc_id": doc_id,
                         "verdict": result.verdict.value,
                         "explanation": result.explanation,
                         "citations": result.citations,

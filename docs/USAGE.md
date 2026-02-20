@@ -1,4 +1,7 @@
-# GraphRAG Medical KG: Usage Docs
+# Pipeline Usage (RU Clinic, MKB)
+
+This product validates appointment data quality in a Russian clinic workflow.
+The internal GraphRAG layer retrieves clinical recommendation fragments from a knowledge graph indexed by MKB code.
 
 ## 1. Install
 
@@ -36,7 +39,7 @@ Example `manifest.json`:
 [
   {
     "filename": "guideline_10_5.pdf",
-    "doc_id": "10_5",
+    "doc_id": "I50",
     "title": "Guideline 10.5",
     "year": 2024,
     "specialty": "cardiology",
@@ -63,14 +66,14 @@ What it does:
 ## 5. Query within one document
 
 ```bash
-python3 docsToGraphRAG.py query --doc_id 10_5 --text "ACE inhibitor in CHF with CKD"
+python3 docsToGraphRAG.py query --mkb_code I50 --text "ACE inhibitor in CHF with CKD"
 ```
 
 Optional filters:
 
 ```bash
 python3 docsToGraphRAG.py query \
-  --doc_id 10_5 \
+  --mkb_code I50 \
   --text "beta blockers" \
   --section_prefix "3.4" \
   --chunk_types recommendation,algorithm \
@@ -78,14 +81,14 @@ python3 docsToGraphRAG.py query \
 ```
 
 Guarantees:
-- Retrieval is always hard-filtered by `doc_id`
+- Retrieval is always hard-filtered by `doc_id`/`mkb_code`
 - Context is packed to 6–12 chunks
 - Citations include section path and page range
 
 ## 6. Judge doctor verdict
 
 ```bash
-python3 docsToGraphRAG.py judge --doc_id 10_5 --verdict "Start ACE inhibitor and recheck creatinine in 2 weeks"
+python3 docsToGraphRAG.py judge --mkb_code I50 --verdict "Start ACE inhibitor and recheck creatinine in 2 weeks"
 ```
 
 Output contains:
@@ -100,13 +103,13 @@ Output contains:
 Use separate script:
 
 ```bash
-python3 tools/visit_validator/validate_visit.py --doc_id 10_5 --visit_json tools/visit_validator/visit.sample.json
+python3 tools/visit_validator/validate_visit.py --mkb_code I50 --visit_json tools/visit_validator/visit.sample.json
 ```
 
 Or free text:
 
 ```bash
-python3 tools/visit_validator/validate_visit.py --doc_id 10_5 --query "Patient has CHF, doctor prescribed ACE inhibitor and renal lab monitoring"
+python3 tools/visit_validator/validate_visit.py --mkb_code I50 --query "Patient has CHF, doctor prescribed ACE inhibitor and renal lab monitoring"
 ```
 
 ## 8. Troubleshooting
@@ -118,3 +121,29 @@ python3 tools/visit_validator/validate_visit.py --doc_id 10_5 --query "Patient h
   - `OLLAMA_EMBED_BASE_URL`
   - `OLLAMA_CHAT_BASE_URL`
   - model names in `.env`.
+
+## 9. Initialize KG from custom path
+
+Use this standalone initializer to ingest every PDF from any folder.
+
+```bash
+python3 tools/init_kg/init_knowledge_graph.py --input /custom/path/to/pdfs
+```
+
+Recursive scan:
+
+```bash
+python3 tools/init_kg/init_knowledge_graph.py --input /custom/path/to/pdfs --recursive
+```
+
+With manifest enrichment:
+
+```bash
+python3 tools/init_kg/init_knowledge_graph.py --input /custom/path/to/pdfs --manifest manifest.json
+```
+
+Strict mode (fail if any PDF has no manifest row):
+
+```bash
+python3 tools/init_kg/init_knowledge_graph.py --input /custom/path/to/pdfs --manifest manifest.json --strict
+```

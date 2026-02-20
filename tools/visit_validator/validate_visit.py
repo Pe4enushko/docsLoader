@@ -23,7 +23,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Validate medical visit verdict/diagnosis/recommendations against doc-scoped knowledge graph"
     )
-    parser.add_argument("--doc_id", required=True, help="Guideline document ID for strict filtering")
+    code_group = parser.add_mutually_exclusive_group(required=True)
+    code_group.add_argument("--doc_id", help="Guideline document ID for strict filtering")
+    code_group.add_argument("--mkb_code", help="MKB code used as document ID")
     parser.add_argument("--visit_json", default=None, help="Path to JSON file with visit data")
     parser.add_argument("--query", default=None, help="Free-text visit data")
     parser.add_argument("--top_k", type=int, default=10, help="Packed context size (6-12 recommended)")
@@ -128,6 +130,7 @@ def main() -> None:
     from graphrag_weaviate.retrieval import RetrievalService
     from graphrag_weaviate.storage import WeaviateGraphStore
 
+    doc_id = args.doc_id or args.mkb_code
     settings = Settings()
     settings.packed_max = max(6, min(12, args.top_k))
 
@@ -142,7 +145,7 @@ def main() -> None:
         chunk_types = [x.strip() for x in args.chunk_types.split(",")] if args.chunk_types else None
 
         packed = retrieval.retrieve_context(
-            doc_id=args.doc_id,
+            doc_id=doc_id,
             query=query,
             section_prefix=args.section_prefix,
             chunk_type_allowlist=chunk_types,
@@ -162,7 +165,7 @@ def main() -> None:
         print(
             json.dumps(
                 {
-                    "doc_id": args.doc_id,
+                    "doc_id": doc_id,
                     "query": query,
                     "retrieved_chunks": context_chunks,
                     "evaluation": evaluation,
