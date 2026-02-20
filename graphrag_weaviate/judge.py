@@ -1,15 +1,18 @@
 from __future__ import annotations
 
-import json
+import logging
 import re
 from typing import Any
 
 from langchain_ollama import ChatOllama
 
 from .config import Settings
-from .models import JudgeResult, VerdictLabel
+from .models import JudgeResult, VerdictJudgeOutput, VerdictLabel
 from .retrieval import RetrievalService
 from .storage import WeaviateGraphStore
+from .utils import truncate_text
+
+log = logging.getLogger(__name__)
 
 
 class VerdictJudge:
@@ -22,8 +25,10 @@ class VerdictJudge:
             base_url=settings.ollama_chat_base_url,
             temperature=0.0,
         )
+        self.structured_chat = self.chat.with_structured_output(VerdictJudgeOutput, include_raw=True)
 
     def evaluate_verdict(self, doc_id: str, verdict_text: str) -> JudgeResult:
+        log.info("Verdict evaluation started doc_id=%s verdict_len=%d", doc_id, len(verdict_text))
         queries = [verdict_text] + self._subqueries(verdict_text)
         records = []
         for q in queries[:5]:
@@ -40,8 +45,22 @@ class VerdictJudge:
         packed = self.retrieval.pack_context(query=verdict_text, chunk_records=list(dedup.values()), target_n=self.settings.packed_max)
 
         prompt = self._build_prompt(doc_id=doc_id, verdict_text=verdict_text, chunks=packed)
-        response = self.chat.invoke(prompt)
-        payload = self._parse_json_output(response.content)
+        response = self.structured_chat.invoke(prompt)
+        raw = response.get("raw") if isinstance(response, dict) else None
+        parsed = response.get("parsed") if isinstance(response, dict) else None
+        parse_error = response.get("parsing_error") if isinstance(response, dict) else None
+        raw_text = getattr(raw, "content", str(raw)) if raw is not None else ""
+        log.info("LLM raw answer (truncated): %s", truncate_text(str(raw_text), 600))
+        if parse_error:
+            log.error("Structured output parsing error: %s", parse_error)
+        payload_model = parsed or VerdictJudgeOutput(
+            verdict=VerdictLabel.INSUFFICIENT_INFO.value,
+            explanation="Не удалось получить структурированный ответ от LLM",
+            citations=[],
+            missing_info=["structured_json_response"],
+            recommended_action=None,
+        )
+        payload = payload_model.model_dump()
 
         label = payload.get("verdict", VerdictLabel.INSUFFICIENT_INFO.value)
         try:
@@ -65,6 +84,7 @@ class VerdictJudge:
             llm_output=payload,
             model_name=self.settings.ollama_chat_model,
         )
+        log.info("Verdict evaluation finished doc_id=%s verdict=%s citations=%d", doc_id, result.verdict.value, len(result.citations))
         return result
 
     def _subqueries(self, text: str) -> list[str]:
@@ -98,31 +118,3 @@ class VerdictJudge:
             '\"recommended_action\": \"рекомендуемое действие\"'
             "}"
         )
-
-    def _parse_json_output(self, text: str) -> dict[str, Any]:
-        cleaned = text.strip()
-        if cleaned.startswith("```"):
-            cleaned = re.sub(r"^```(?:json)?", "", cleaned)
-            cleaned = cleaned.rstrip("`")
-        try:
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            m = re.search(r"\{.*\}", cleaned, flags=re.DOTALL)
-            if not m:
-                return {
-                    "verdict": VerdictLabel.INSUFFICIENT_INFO.value,
-                    "explanation": "Model returned non-JSON output",
-                    "citations": [],
-                    "missing_info": ["structured_json_response"],
-                    "recommended_action": None,
-                }
-            try:
-                return json.loads(m.group(0))
-            except json.JSONDecodeError:
-                return {
-                    "verdict": VerdictLabel.INSUFFICIENT_INFO.value,
-                    "explanation": "Model returned invalid JSON",
-                    "citations": [],
-                    "missing_info": ["structured_json_response"],
-                    "recommended_action": None,
-                }

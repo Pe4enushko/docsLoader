@@ -19,6 +19,12 @@ def normalize_space(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def truncate_text(text: str, max_len: int = 500) -> str:
+    if len(text) <= max_len:
+        return text
+    return f"{text[:max_len]}...<truncated {len(text) - max_len} chars>"
+
+
 def load_json(path: Path) -> dict:
     if not path.exists():
         return {}

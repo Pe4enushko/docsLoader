@@ -14,7 +14,6 @@ except Exception:
 @dataclass(slots=True)
 class Settings:
     weaviate_url: str = os.getenv("WEAVIATE_URL", "http://localhost:8080")
-    weaviate_api_key: str | None = os.getenv("WEAVIATE_API_KEY")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")
     ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "llama3.1:8b")
     ollama_embed_base_url: str | None = os.getenv("OLLAMA_EMBED_BASE_URL") or os.getenv("OLLAMA_BASE_URL")

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from collections import defaultdict
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 from .config import Settings
 from .models import ChunkRecord, ChunkType
 from .storage import WeaviateGraphStore
+
+log = logging.getLogger(__name__)
 
 
 class RetrievalService:
@@ -122,6 +125,7 @@ class RetrievalService:
         chunk_type_allowlist: list[str] | None = None,
         page_range: tuple[int, int] | None = None,
     ) -> list[ChunkRecord]:
+        log.info("Retrieve context start doc_id=%s query_len=%d", doc_id, len(query))
         filters: dict[str, Any] = {}
         if section_prefix:
             filters["section_prefix"] = section_prefix
@@ -137,15 +141,20 @@ class RetrievalService:
             top_k_bm25=self.settings.k_initial,
             filters=filters,
         )[: self.settings.k_initial]
+        log.info("Retrieve context candidates=%d", len(candidates))
 
         ranked = self.rerank(query=query, candidates=candidates)[: self.settings.k_top]
+        log.info("Retrieve context reranked_top=%d", len(ranked))
         seed_ids = [r.chunk_id for r in ranked]
         expanded_ids = self.expand_graph(seed_chunk_ids=seed_ids, doc_id=doc_id, budget=self.settings.k_expand)
+        log.info("Retrieve context expanded=%d", len(expanded_ids))
 
         expanded_records = self.store.fetch_chunks_by_ids(doc_id=doc_id, chunk_ids=expanded_ids)
         all_records = ranked + expanded_records
 
-        return self.pack_context(query=query, chunk_records=all_records, target_n=self.settings.packed_max)
+        packed = self.pack_context(query=query, chunk_records=all_records, target_n=self.settings.packed_max)
+        log.info("Retrieve context packed=%d", len(packed))
+        return packed
 
     def _terms(self, text: str) -> set[str]:
         return set(re.findall(r"[\w\-]{3,}", text.lower()))

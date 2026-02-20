@@ -28,6 +28,7 @@ class IngestionService:
 
     def ingest(self, input_dir: str, manifest_path: str) -> dict[str, Any]:
         started = time.time()
+        log.info("Ingestion started input_dir=%s manifest=%s", input_dir, manifest_path)
         manifest = self._load_manifest(Path(manifest_path))
         checkpoint = load_json(self.checkpoint_path)
         summary: dict[str, Any] = {"docs_total": 0, "docs_ingested": 0, "docs_skipped": 0, "docs": []}
@@ -52,16 +53,25 @@ class IngestionService:
                 summary["docs_skipped"] += 1
 
         summary["runtime_sec"] = round(time.time() - started, 3)
+        log.info(
+            "Ingestion finished docs_total=%d docs_ingested=%d docs_skipped=%d runtime_sec=%.3f",
+            summary["docs_total"],
+            summary["docs_ingested"],
+            summary["docs_skipped"],
+            summary["runtime_sec"],
+        )
         return summary
 
     def ingest_document(self, pdf_path: Path, meta: dict[str, Any]) -> dict[str, Any]:
         t0 = time.time()
         doc_id = str(meta["doc_id"])
         title = str(meta.get("title") or pdf_path.stem)
+        log.info("Ingest document started doc_id=%s file=%s", doc_id, pdf_path)
         pages = self._extract_pages(pdf_path)
         doc_hash = stable_hash("\n".join([p["text"] for p in pages]))
 
         if self.store.find_document_by_hash(doc_hash):
+            log.info("Skip duplicate document hash doc_id=%s", doc_id)
             return {
                 "doc_id": doc_id,
                 "status": "skipped_duplicate_document_hash",
@@ -104,7 +114,7 @@ class IngestionService:
                 rec_id = self.store.upsert_recommendation(rec, doc_id=doc_id)
                 self.store.link_recommendation_to_chunk(rec_id, chunk_id)
 
-        return {
+        result = {
             "doc_id": doc_id,
             "status": "ingested",
             "pages": len(pages),
@@ -113,6 +123,15 @@ class IngestionService:
             "avg_tokens": round(total_tokens / max(1, len(chunks)), 2),
             "runtime_sec": round(time.time() - t0, 3),
         }
+        log.info(
+            "Ingest document finished doc_id=%s pages=%d sections=%d chunks=%d runtime_sec=%.3f",
+            doc_id,
+            result["pages"],
+            result["sections"],
+            result["chunks"],
+            result["runtime_sec"],
+        )
+        return result
 
     def _load_manifest(self, path: Path) -> dict[str, dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))

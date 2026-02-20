@@ -13,10 +13,8 @@ dependencies = [
   "langchain-ollama>=0.2.0",
   "pymupdf>=1.24.0",
   "python-dotenv>=1.0.1",
+  "pydantic>=2.8.0",
 ]
-
-[project.scripts]
-docs-graphrag = "graphrag_weaviate.cli:main"
 
 [tool.setuptools]
 packages = ["graphrag_weaviate"]
