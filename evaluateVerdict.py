@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from graphrag_weaviate.config import Settings
-from graphrag_weaviate.judge import AppointmentJudge, normalize_mkb_code
+from graphrag_weaviate.llm import AppointmentJudge, normalize_mkb_code
 from graphrag_weaviate.logging_utils import setup_logging
 from graphrag_weaviate.retrieval import RetrievalService
 from graphrag_weaviate.storage import WeaviateGraphStore

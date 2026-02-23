@@ -13,7 +13,7 @@ from evaluateVerdict import (
     load_manifest_mkb_index,
 )
 from graphrag_weaviate.config import Settings
-from graphrag_weaviate.judge import AppointmentJudge
+from graphrag_weaviate.llm import AppointmentJudge
 from graphrag_weaviate.logging_utils import setup_logging
 from graphrag_weaviate.retrieval import RetrievalService
 from graphrag_weaviate.storage import WeaviateGraphStore
