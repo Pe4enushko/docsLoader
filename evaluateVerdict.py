@@ -26,8 +26,7 @@ ONE_C_LOGIN = os.getenv("ONE_C_LOGIN") or ""
 ONE_C_PASSWORD = os.getenv("ONE_C_PASSWORD") or ""
 ONE_C_TIMEOUT_SECONDS = float(os.getenv("ONE_C_TIMEOUT_SECONDS", "15"))
 LOG_FILE = "logs/docsToGraphRAG.log"
-CONTEXT_TARGET = int(os.getenv("CONTEXT_TARGET", "10"))
-SCORES_SYSTEM_PROMPT = os.getenv("SCORES_SYSTEM_PROMPT") or None
+CONTEXT_TARGET = int(os.getenv("CONTEXT_TARGET", "8"))
 
 
 def fetch_appointments_from_1c() -> list[dict[str, Any]]:
@@ -197,7 +196,7 @@ def main() -> None:
     store = WeaviateGraphStore(settings)
     try:
         retrieval = RetrievalService(store, settings)
-        judge = AppointmentJudge(retrieval=retrieval, settings=settings, system_prompt=SCORES_SYSTEM_PROMPT)
+        judge = AppointmentJudge(retrieval=retrieval, settings=settings)
 
         manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)
         appointments = fetch_appointments_from_1c()

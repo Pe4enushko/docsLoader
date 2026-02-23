@@ -7,7 +7,6 @@ from typing import Any
 
 from evaluateVerdict import (
     MANIFEST_PATH,
-    SCORES_SYSTEM_PROMPT,
     build_row_for_medkard,
     extract_visit_guid,
     load_manifest_mkb_index,
@@ -42,7 +41,7 @@ def main() -> None:
     store = WeaviateGraphStore(settings)
     try:
         retrieval = RetrievalService(store, settings)
-        judge = AppointmentJudge(retrieval=retrieval, settings=settings, system_prompt=SCORES_SYSTEM_PROMPT)
+        judge = AppointmentJudge(retrieval=retrieval, settings=settings)
         manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)
         appointments = load_appointments_from_file(TEST_JSON_PATH)
 
