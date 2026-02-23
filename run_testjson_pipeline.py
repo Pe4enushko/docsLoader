@@ -17,7 +17,6 @@ from graphrag_weaviate.judge import AppointmentJudge
 from graphrag_weaviate.logging_utils import setup_logging
 from graphrag_weaviate.retrieval import RetrievalService
 from graphrag_weaviate.storage import WeaviateGraphStore
-from medkard_postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_row
 
 TEST_JSON_PATH = "testjson.json"
 TEST_LOG_FILE = "logs/run_testjson_pipeline.log"
@@ -48,28 +47,20 @@ def main() -> None:
         appointments = load_appointments_from_file(TEST_JSON_PATH)
 
         processed = 0
-        skipped = 0
-        with connect_postgres() as conn:
-            ensure_medkard_table(conn)
-            for item in appointments:
-                visit_guid = extract_visit_guid(item)
-                if not visit_guid:
-                    raise ValueError("Missing Прием.GUID for appointment")
-                if is_visit_processed(conn, visit_guid):
-                    skipped += 1
-                    continue
+        for item in appointments:
+            visit_guid = extract_visit_guid(item)
+            if not visit_guid:
+                raise ValueError("Missing Прием.GUID for appointment")
 
-                row = build_row_for_medkard(
-                    judge=judge,
-                    appointment=item,
-                    manifest_exact=manifest_exact,
-                    manifest_group=manifest_group,
-                )
-                upsert_medkard_row(conn, row)
-                conn.commit()
-                processed += 1
+            build_row_for_medkard(
+                judge=judge,
+                appointment=item,
+                manifest_exact=manifest_exact,
+                manifest_group=manifest_group,
+            )
+            processed += 1
 
-        print(json.dumps({"source": TEST_JSON_PATH, "processed": processed, "skipped": skipped}, ensure_ascii=False, indent=2))
+        print(json.dumps({"source": TEST_JSON_PATH, "processed": processed, "db_write": False}, ensure_ascii=False, indent=2))
     except Exception:
         log.exception("testjson pipeline failed")
         raise
