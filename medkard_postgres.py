@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import os
-import re
-import urllib.parse
+from urllib.parse import quote_plus
 
 try:
     import psycopg  # type: ignore
@@ -14,32 +13,41 @@ try:
 except ImportError:  # pragma: no cover
     psycopg2 = None
 
-POSTGRES_DSN = os.getenv("POSTGRES_DSN", "")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST", "")
+POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
+POSTGRES_USER = os.getenv("POSTGRES_USER", "")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "")
+POSTGRES_SSLMODE = os.getenv("POSTGRES_SSLMODE", "prefer")
 
 
-def extract_db_name_from_dsn(dsn: str) -> str | None:
-    parsed = urllib.parse.urlparse(dsn)
-    if parsed.scheme and parsed.path and parsed.path != "/":
-        return parsed.path.lstrip("/")
-    match = re.search(r"(?:^|\\s)(?:dbname|database)\\s*=\\s*([^\\s]+)", dsn)
-    if match:
-        return match.group(1).strip().strip("'\"")
-    return None
+def build_postgres_dsn() -> str:
+    if not POSTGRES_HOST:
+        raise ValueError("POSTGRES_HOST is not set")
+    if not POSTGRES_PORT:
+        raise ValueError("POSTGRES_PORT is not set")
+    if not POSTGRES_USER:
+        raise ValueError("POSTGRES_USER is not set")
+    if not POSTGRES_PASSWORD:
+        raise ValueError("POSTGRES_PASSWORD is not set")
+    if not POSTGRES_DB:
+        raise ValueError("POSTGRES_DB is not set")
+
+    user = quote_plus(POSTGRES_USER)
+    password = quote_plus(POSTGRES_PASSWORD)
+    host = POSTGRES_HOST.strip()
+    port = str(POSTGRES_PORT).strip()
+    db = POSTGRES_DB.strip()
+    sslmode = POSTGRES_SSLMODE.strip() or "prefer"
+    return f"postgresql://{user}:{password}@{host}:{port}/{db}?sslmode={sslmode}"
 
 
 def connect_postgres():
-    if not POSTGRES_DSN:
-        raise ValueError("POSTGRES_DSN is not set")
-    if not POSTGRES_DB:
-        raise ValueError("POSTGRES_DB is not set")
-    db_from_dsn = extract_db_name_from_dsn(POSTGRES_DSN)
-    if db_from_dsn and db_from_dsn != POSTGRES_DB:
-        raise ValueError(f"POSTGRES_DB ({POSTGRES_DB}) does not match DB in POSTGRES_DSN ({db_from_dsn})")
+    dsn = build_postgres_dsn()
     if psycopg is not None:
-        return psycopg.connect(POSTGRES_DSN)
+        return psycopg.connect(dsn)
     if psycopg2 is not None:
-        return psycopg2.connect(POSTGRES_DSN)
+        return psycopg2.connect(dsn)
     raise RuntimeError("Neither psycopg nor psycopg2 is installed")
 
 
