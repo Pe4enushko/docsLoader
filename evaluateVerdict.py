@@ -13,15 +13,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from langchain_ollama import ChatOllama
-
 from graphrag_weaviate.config import Settings
+from graphrag_weaviate.judge import AppointmentJudge, normalize_mkb_code
 from graphrag_weaviate.logging_utils import setup_logging
-from graphrag_weaviate.models import ApiJudgeOutput
 from graphrag_weaviate.retrieval import RetrievalService
 from graphrag_weaviate.storage import WeaviateGraphStore
-from graphrag_weaviate.utils import truncate_text
-from medkard_postgres import connect_postgres, ensure_medkard_table, upsert_medkard_rows
+from medkard_postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_row
 
 MANIFEST_PATH = os.getenv("MANIFEST_PATH", "manifest.csv")
 ONE_C_APPOINTMENTS_URL = os.getenv("ONE_C_APPOINTMENTS_URL", "<ONE_C_APPOINTMENTS_URL>")
@@ -30,14 +27,7 @@ ONE_C_PASSWORD = os.getenv("ONE_C_PASSWORD") or ""
 ONE_C_TIMEOUT_SECONDS = float(os.getenv("ONE_C_TIMEOUT_SECONDS", "15"))
 LOG_FILE = "logs/docsToGraphRAG.log"
 CONTEXT_TARGET = int(os.getenv("CONTEXT_TARGET", "10"))
-SCORES_SYSTEM_PROMPT = os.getenv(
-    "SCORES_SYSTEM_PROMPT",
-    (
-        "Ты ассистент внутреннего контроля качества заполнения медицинского приёма в российской клинике. "
-        "Оценивай медицинскую корректность заполнения и юридические риски оформления. "
-        "Не используй внешние медицинские знания."
-    ),
-)
+SCORES_SYSTEM_PROMPT = os.getenv("SCORES_SYSTEM_PROMPT") or None
 
 
 def fetch_appointments_from_1c() -> list[dict[str, Any]]:
@@ -69,10 +59,6 @@ def fetch_appointments_from_1c() -> list[dict[str, Any]]:
     if not isinstance(appointments, list):
         raise ValueError("HTTP response must contain 'appointments' array")
     return [item for item in appointments if isinstance(item, dict)]
-
-
-def normalize_mkb_code(code: str) -> str:
-    return code.strip().upper().replace(" ", "")
 
 
 def split_manifest_mkb(raw: str) -> list[str]:
@@ -121,168 +107,16 @@ def extract_mkb_codes(appointment: dict[str, Any]) -> list[str]:
     return found
 
 
-def resolve_doc_id_by_mkb(mkb_codes: list[str], exact: dict[str, str], group: dict[str, str]) -> tuple[str | None, str | None]:
+def resolve_doc_id_by_mkb(mkb_codes: list[str], exact: dict[str, str], group: dict[str, str]) -> str | None:
     for code in mkb_codes:
         doc_id = exact.get(code)
         if doc_id:
-            return doc_id, code
+            return doc_id
     for code in mkb_codes:
         doc_id = group.get(code.split(".", 1)[0])
         if doc_id:
-            return doc_id, code
-    return None, None
-
-
-def _invoke_structured(llm: ChatOllama, prompt: str, log: logging.Logger) -> dict[str, Any]:
-    structured_llm = llm.with_structured_output(ApiJudgeOutput, include_raw=True)
-    resp = structured_llm.invoke(prompt)
-    raw = resp.get("raw") if isinstance(resp, dict) else None
-    parsed = resp.get("parsed") if isinstance(resp, dict) else None
-    parse_error = resp.get("parsing_error") if isinstance(resp, dict) else None
-
-    raw_text = getattr(raw, "content", str(raw)) if raw is not None else ""
-    if raw_text:
-        log.info("LLM raw answer (truncated): %s", truncate_text(str(raw_text), 500))
-    if parse_error:
-        log.error("Structured output parsing error: %s", parse_error)
-    if parsed is None:
-        return {
-            "overall_score": 1,
-            "risk_level": "high",
-            "score_visit_identification": 1,
-            "score_anamnesis": 1,
-            "score_inspection": 1,
-            "score_dynamic": 1,
-            "score_diagnosis": 1,
-            "score_recommendations": 1,
-            "score_structure": 1,
-            "issues": "Ошибка структурированного ответа LLM",
-            "summary": "Не удалось получить валидный структурированный ответ от LLM",
-        }
-    return parsed.model_dump()
-
-
-def build_base_prompt(appointment: dict[str, Any], mkb_codes: list[str]) -> str:
-    return (
-        f"{SCORES_SYSTEM_PROMPT}\n\n"
-        "Этап 1. Базовая проверка заполнения приёма без клинического контекста KG.\n"
-        "Проверь полноту, логичность, внутреннюю согласованность и медицинскую адекватность записи.\n"
-        "risk_level = юридический риск некорректного заполнения документации (low|medium|high).\n\n"
-        f"МКБ в записи: {', '.join(mkb_codes) if mkb_codes else 'не указаны'}\n\n"
-        f"JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}"
-    )
-
-
-def build_kg_queries(appointment: dict[str, Any], mkb_codes: list[str]) -> list[str]:
-    queries: list[str] = []
-    diagnosis = appointment.get("Диагнозы")
-    if isinstance(diagnosis, list):
-        for item in diagnosis:
-            if not isinstance(item, dict):
-                continue
-            combined = " ".join(
-                part
-                for part in [
-                    normalize_mkb_code(str(item.get("КодМКБ", ""))),
-                    str(item.get("НаименованиеМКБ", "")).strip(),
-                    str(item.get("Детализация", "")).strip(),
-                ]
-                if part
-            ).strip()
-            if combined:
-                queries.append(combined)
-    inspection = appointment.get("ДанныеОсмотра")
-    if isinstance(inspection, list):
-        for item in inspection:
-            if not isinstance(item, dict):
-                continue
-            param = str(item.get("Параметр", "")).lower()
-            value = str(item.get("Значение", "")).strip()
-            if not value:
-                continue
-            if "рекомендац" in param or "осмотр" in param or "динамик" in param or "анамн" in param:
-                queries.append(value[:500])
-    if mkb_codes:
-        queries.append(" ".join(mkb_codes))
-    if not queries:
-        queries.append(json.dumps(appointment, ensure_ascii=False)[:1000])
-    uniq: list[str] = []
-    for q in queries:
-        q = q.strip()
-        if q and q not in uniq:
-            uniq.append(q)
-    return uniq[:7]
-
-
-def _to_chunk_dict(chunk: Any) -> dict[str, Any]:
-    return {
-        "chunk_id": chunk.chunk_id,
-        "section_path": chunk.section_path,
-        "page_start": chunk.page_start,
-        "page_end": chunk.page_end,
-        "chunk_type": chunk.chunk_type.value if hasattr(chunk.chunk_type, "value") else str(chunk.chunk_type),
-        "chunk_text": chunk.chunk_text,
-    }
-
-
-def build_kg_prompt(
-    appointment: dict[str, Any],
-    mkb_codes: list[str],
-    doc_id: str,
-    queries: list[str],
-    context_chunks: list[dict[str, Any]],
-) -> str:
-    return (
-        f"{SCORES_SYSTEM_PROMPT}\n\n"
-        "Этап 2. Проверка с клиническими рекомендациями из knowledge graph.\n"
-        "Особенно проверь корректность осмотра, диагноза и рекомендаций относительно контекста.\n"
-        "risk_level = юридический риск некорректного заполнения документации (low|medium|high).\n\n"
-        f"doc_id рекомендаций: {doc_id}\n"
-        f"МКБ в записи: {', '.join(mkb_codes)}\n"
-        f"Поисковые запросы:\n{json.dumps(queries, ensure_ascii=False, indent=2)}\n\n"
-        f"JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}\n\n"
-        f"Контекст KG:\n{json.dumps(context_chunks, ensure_ascii=False, indent=2)}"
-    )
-
-
-def merge_scores(base_scores: dict[str, Any], kg_scores: dict[str, Any]) -> dict[str, Any]:
-    out = dict(base_scores)
-    out["score_inspection"] = int(kg_scores["score_inspection"])
-    out["score_diagnosis"] = int(kg_scores["score_diagnosis"])
-    out["score_recommendations"] = int(kg_scores["score_recommendations"])
-
-    total = (
-        int(out["score_visit_identification"])
-        + int(out["score_anamnesis"])
-        + int(out["score_inspection"])
-        + int(out["score_dynamic"])
-        + int(out["score_diagnosis"])
-        + int(out["score_recommendations"])
-        + int(out["score_structure"])
-    )
-    out["overall_score"] = max(1, min(5, round(total / 7)))
-
-    rank = {"low": 1, "medium": 2, "high": 3}
-    base_risk = str(base_scores.get("risk_level", "high"))
-    kg_risk = str(kg_scores.get("risk_level", "high"))
-    out["risk_level"] = base_risk if rank.get(base_risk, 3) >= rank.get(kg_risk, 3) else kg_risk
-
-    issues = []
-    base_issues = str(base_scores.get("issues", "")).strip()
-    kg_issues = str(kg_scores.get("issues", "")).strip()
-    if base_issues:
-        issues.append(base_issues)
-    if kg_issues:
-        issues.append(kg_issues)
-    out["issues"] = "; ".join(issues) if issues else None
-
-    kg_summary = str(kg_scores.get("summary", "")).strip()
-    out["summary"] = kg_summary or str(base_scores.get("summary", "")).strip()
-    return out
-
-
-def generate_human_readable(appointment: dict[str, Any]) -> str:
-    return json.dumps(appointment, ensure_ascii=False, indent=2)
+            return doc_id
+    return None
 
 
 def parse_visit_date(raw_date: Any) -> str | None:
@@ -298,37 +132,30 @@ def parse_visit_date(raw_date: Any) -> str | None:
 
 
 def build_row_for_medkard(
-    llm: ChatOllama,
-    retrieval: RetrievalService,
+    judge: AppointmentJudge,
     appointment: dict[str, Any],
     manifest_exact: dict[str, str],
     manifest_group: dict[str, str],
-    log: logging.Logger,
 ) -> tuple:
     mkb_codes = extract_mkb_codes(appointment)
-    base_scores = _invoke_structured(llm=llm, prompt=build_base_prompt(appointment, mkb_codes), log=log)
+    base_scores = judge.evaluate_base(appointment=appointment, mkb_codes=mkb_codes)
 
-    doc_id, _ = resolve_doc_id_by_mkb(mkb_codes, manifest_exact, manifest_group)
     final_scores = base_scores
+    doc_id = resolve_doc_id_by_mkb(mkb_codes, manifest_exact, manifest_group)
     if mkb_codes and doc_id:
-        queries = build_kg_queries(appointment, mkb_codes)
-        dedup: dict[str, Any] = {}
-        for q in queries:
-            for chunk in retrieval.retrieve_context(doc_id=doc_id, query=q):
-                best = dedup.get(chunk.chunk_id)
-                if best is None or chunk.score > best.score:
-                    dedup[chunk.chunk_id] = chunk
-        top_chunks = sorted(dedup.values(), key=lambda c: c.score, reverse=True)[:CONTEXT_TARGET]
-        context_chunks = [_to_chunk_dict(c) for c in top_chunks]
-        kg_prompt = build_kg_prompt(appointment, mkb_codes, doc_id, queries, context_chunks)
-        kg_scores = _invoke_structured(llm=llm, prompt=kg_prompt, log=log)
-        final_scores = merge_scores(base_scores, kg_scores)
+        kg_scores, _ = judge.evaluate_with_kg(
+            doc_id=doc_id,
+            appointment=appointment,
+            mkb_codes=mkb_codes,
+            context_target=CONTEXT_TARGET,
+        )
+        final_scores = judge.merge_base_and_kg(base_scores=base_scores, kg_scores=kg_scores)
     elif mkb_codes and not doc_id:
         note = "МКБ найден, но не сопоставлен с manifest.csv; KG-проверка пропущена"
         existing = str(base_scores.get("issues", "")).strip()
         final_scores["issues"] = f"{existing}; {note}" if existing else note
 
-    human_readable = generate_human_readable(appointment=appointment)
+    human_readable = judge.render_human_readable(appointment=appointment)
 
     visit = appointment.get("Прием") if isinstance(appointment.get("Прием"), dict) else {}
     visit_guid = str(visit.get("GUID", "")).strip()
@@ -357,6 +184,11 @@ def build_row_for_medkard(
     )
 
 
+def extract_visit_guid(appointment: dict[str, Any]) -> str:
+    visit = appointment.get("Прием") if isinstance(appointment.get("Прием"), dict) else {}
+    return str(visit.get("GUID", "")).strip()
+
+
 def main() -> None:
     setup_logging(LOG_FILE)
     log = logging.getLogger(__name__)
@@ -364,31 +196,35 @@ def main() -> None:
     settings = Settings()
     store = WeaviateGraphStore(settings)
     try:
-        llm = ChatOllama(model=settings.ollama_chat_model, base_url=settings.ollama_chat_base_url, temperature=0.0)
         retrieval = RetrievalService(store, settings)
+        judge = AppointmentJudge(retrieval=retrieval, settings=settings, system_prompt=SCORES_SYSTEM_PROMPT)
 
         manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)
         appointments = fetch_appointments_from_1c()
 
-        rows = []
-        for item in appointments:
-            rows.append(
-                build_row_for_medkard(
-                    llm=llm,
-                    retrieval=retrieval,
+        with connect_postgres() as conn:
+            ensure_medkard_table(conn)
+            processed = 0
+            skipped = 0
+            for item in appointments:
+                visit_guid = extract_visit_guid(item)
+                if not visit_guid:
+                    raise ValueError("Missing Прием.GUID for appointment")
+                if is_visit_processed(conn, visit_guid):
+                    skipped += 1
+                    continue
+
+                row = build_row_for_medkard(
+                    judge=judge,
                     appointment=item,
                     manifest_exact=manifest_exact,
                     manifest_group=manifest_group,
-                    log=log,
                 )
-            )
+                upsert_medkard_row(conn, row)
+                conn.commit()
+                processed += 1
 
-        with connect_postgres() as conn:
-            ensure_medkard_table(conn)
-            upsert_medkard_rows(conn, rows)
-            conn.commit()
-
-        print(json.dumps({"processed": len(rows)}, ensure_ascii=False, indent=2))
+        print(json.dumps({"processed": processed, "skipped": skipped}, ensure_ascii=False, indent=2))
     except Exception:
         log.exception("MedKard evaluation pipeline failed")
         raise

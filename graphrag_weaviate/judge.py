@@ -1,120 +1,197 @@
 from __future__ import annotations
 
+import json
 import logging
-import re
 from typing import Any
 
 from langchain_ollama import ChatOllama
 
 from .config import Settings
-from .models import JudgeResult, VerdictJudgeOutput, VerdictLabel
+from .models import ApiJudgeOutput
 from .retrieval import RetrievalService
-from .storage import WeaviateGraphStore
 from .utils import truncate_text
 
 log = logging.getLogger(__name__)
 
+DEFAULT_SCORES_PROMPT = (
+    "Ты ассистент внутреннего контроля качества заполнения медицинского приёма в российской клинике. "
+    "Оценивай медицинскую корректность заполнения и юридические риски оформления. "
+    "Не используй внешние медицинские знания."
+)
 
-class VerdictJudge:
-    def __init__(self, store: WeaviateGraphStore, retrieval: RetrievalService, settings: Settings):
-        self.store = store
+
+def normalize_mkb_code(code: str) -> str:
+    return code.strip().upper().replace(" ", "")
+
+
+class AppointmentJudge:
+    def __init__(self, retrieval: RetrievalService, settings: Settings, system_prompt: str | None = None):
         self.retrieval = retrieval
         self.settings = settings
+        self.system_prompt = system_prompt or DEFAULT_SCORES_PROMPT
         self.chat = ChatOllama(
             model=settings.ollama_chat_model,
             base_url=settings.ollama_chat_base_url,
             temperature=0.0,
         )
-        self.structured_chat = self.chat.with_structured_output(VerdictJudgeOutput, include_raw=True)
+        self.structured = self.chat.with_structured_output(ApiJudgeOutput, include_raw=True)
 
-    def evaluate_verdict(self, doc_id: str, verdict_text: str) -> JudgeResult:
-        log.info("Verdict evaluation started doc_id=%s verdict_len=%d", doc_id, len(verdict_text))
-        queries = [verdict_text] + self._subqueries(verdict_text)
-        records = []
-        for q in queries[:5]:
-            records.extend(self.retrieval.retrieve_context(doc_id=doc_id, query=q))
+    def evaluate_base(self, appointment: dict[str, Any], mkb_codes: list[str]) -> dict[str, Any]:
+        prompt = (
+            f"{self.system_prompt}\n\n"
+            "Этап 1. Базовая проверка заполнения приёма без клинического контекста KG.\n"
+            "Проверь полноту, логичность, внутреннюю согласованность и медицинскую адекватность записи.\n"
+            "risk_level = юридический риск некорректного заполнения документации (low|medium|high).\n\n"
+            f"МКБ в записи: {', '.join(mkb_codes) if mkb_codes else 'не указаны'}\n\n"
+            f"JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}"
+        )
+        return self._invoke_structured(prompt)
 
+    def evaluate_with_kg(
+        self,
+        doc_id: str,
+        appointment: dict[str, Any],
+        mkb_codes: list[str],
+        context_target: int,
+    ) -> tuple[dict[str, Any], list[str]]:
+        queries = self.build_kg_queries(appointment=appointment, mkb_codes=mkb_codes)
         dedup: dict[str, Any] = {}
-        for r in records:
-            if r.doc_id != doc_id:
-                continue
-            existing = dedup.get(r.chunk_id)
-            if existing is None or r.score > existing.score:
-                dedup[r.chunk_id] = r
+        for query in queries:
+            for chunk in self.retrieval.retrieve_context(doc_id=doc_id, query=query):
+                best = dedup.get(chunk.chunk_id)
+                if best is None or chunk.score > best.score:
+                    dedup[chunk.chunk_id] = chunk
 
-        packed = self.retrieval.pack_context(query=verdict_text, chunk_records=list(dedup.values()), target_n=self.settings.packed_max)
+        top_chunks = sorted(dedup.values(), key=lambda c: c.score, reverse=True)[:context_target]
+        context_chunks = [self._to_chunk_dict(c) for c in top_chunks]
+        prompt = (
+            f"{self.system_prompt}\n\n"
+            "Этап 2. Проверка с клиническими рекомендациями из knowledge graph.\n"
+            "Особенно проверь корректность осмотра, диагноза и рекомендаций относительно контекста.\n"
+            "risk_level = юридический риск некорректного заполнения документации (low|medium|high).\n\n"
+            f"doc_id рекомендаций: {doc_id}\n"
+            f"МКБ в записи: {', '.join(mkb_codes)}\n"
+            f"Поисковые запросы:\n{json.dumps(queries, ensure_ascii=False, indent=2)}\n\n"
+            f"JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}\n\n"
+            f"Контекст KG:\n{json.dumps(context_chunks, ensure_ascii=False, indent=2)}"
+        )
+        return self._invoke_structured(prompt), [c["chunk_id"] for c in context_chunks if c.get("chunk_id")]
 
-        prompt = self._build_prompt(doc_id=doc_id, verdict_text=verdict_text, chunks=packed)
-        response = self.structured_chat.invoke(prompt)
-        raw = response.get("raw") if isinstance(response, dict) else None
-        parsed = response.get("parsed") if isinstance(response, dict) else None
-        parse_error = response.get("parsing_error") if isinstance(response, dict) else None
+    def merge_base_and_kg(self, base_scores: dict[str, Any], kg_scores: dict[str, Any]) -> dict[str, Any]:
+        out = dict(base_scores)
+        out["score_inspection"] = int(kg_scores["score_inspection"])
+        out["score_diagnosis"] = int(kg_scores["score_diagnosis"])
+        out["score_recommendations"] = int(kg_scores["score_recommendations"])
+
+        total = (
+            int(out["score_visit_identification"])
+            + int(out["score_anamnesis"])
+            + int(out["score_inspection"])
+            + int(out["score_dynamic"])
+            + int(out["score_diagnosis"])
+            + int(out["score_recommendations"])
+            + int(out["score_structure"])
+        )
+        out["overall_score"] = max(1, min(5, round(total / 7)))
+
+        rank = {"low": 1, "medium": 2, "high": 3}
+        base_risk = str(base_scores.get("risk_level", "high"))
+        kg_risk = str(kg_scores.get("risk_level", "high"))
+        out["risk_level"] = base_risk if rank.get(base_risk, 3) >= rank.get(kg_risk, 3) else kg_risk
+
+        issues = []
+        base_issues = str(base_scores.get("issues", "")).strip()
+        kg_issues = str(kg_scores.get("issues", "")).strip()
+        if base_issues:
+            issues.append(base_issues)
+        if kg_issues:
+            issues.append(kg_issues)
+        out["issues"] = "; ".join(issues) if issues else None
+
+        kg_summary = str(kg_scores.get("summary", "")).strip()
+        out["summary"] = kg_summary or str(base_scores.get("summary", "")).strip()
+        return out
+
+    def build_kg_queries(self, appointment: dict[str, Any], mkb_codes: list[str]) -> list[str]:
+        queries: list[str] = []
+        diagnosis = appointment.get("Диагнозы")
+        if isinstance(diagnosis, list):
+            for item in diagnosis:
+                if not isinstance(item, dict):
+                    continue
+                combined = " ".join(
+                    part
+                    for part in [
+                        normalize_mkb_code(str(item.get("КодМКБ", ""))),
+                        str(item.get("НаименованиеМКБ", "")).strip(),
+                        str(item.get("Детализация", "")).strip(),
+                    ]
+                    if part
+                ).strip()
+                if combined:
+                    queries.append(combined)
+
+        inspection = appointment.get("ДанныеОсмотра")
+        if isinstance(inspection, list):
+            for item in inspection:
+                if not isinstance(item, dict):
+                    continue
+                param = str(item.get("Параметр", "")).lower()
+                value = str(item.get("Значение", "")).strip()
+                if not value:
+                    continue
+                if "рекомендац" in param or "осмотр" in param or "динамик" in param or "анамн" in param:
+                    queries.append(value[:500])
+
+        if mkb_codes:
+            queries.append(" ".join(mkb_codes))
+        if not queries:
+            queries.append(json.dumps(appointment, ensure_ascii=False)[:1000])
+
+        uniq: list[str] = []
+        for q in queries:
+            qn = q.strip()
+            if qn and qn not in uniq:
+                uniq.append(qn)
+        return uniq[:7]
+
+    def render_human_readable(self, appointment: dict[str, Any]) -> str:
+        return json.dumps(appointment, ensure_ascii=False, indent=2)
+
+    def _invoke_structured(self, prompt: str) -> dict[str, Any]:
+        resp = self.structured.invoke(prompt)
+        raw = resp.get("raw") if isinstance(resp, dict) else None
+        parsed = resp.get("parsed") if isinstance(resp, dict) else None
+        parse_error = resp.get("parsing_error") if isinstance(resp, dict) else None
+
         raw_text = getattr(raw, "content", str(raw)) if raw is not None else ""
-        log.info("LLM raw answer (truncated): %s", truncate_text(str(raw_text), 600))
+        if raw_text:
+            log.info("LLM raw answer (truncated): %s", truncate_text(str(raw_text), 500))
         if parse_error:
             log.error("Structured output parsing error: %s", parse_error)
-        payload_model = parsed or VerdictJudgeOutput(
-            verdict=VerdictLabel.INSUFFICIENT_INFO.value,
-            explanation="Не удалось получить структурированный ответ от LLM",
-            citations=[],
-            missing_info=["structured_json_response"],
-            recommended_action=None,
-        )
-        payload = payload_model.model_dump()
 
-        label = payload.get("verdict", VerdictLabel.INSUFFICIENT_INFO.value)
-        try:
-            verdict = VerdictLabel(label)
-        except ValueError:
-            verdict = VerdictLabel.INSUFFICIENT_INFO
+        if parsed is None:
+            return {
+                "overall_score": 1,
+                "risk_level": "high",
+                "score_visit_identification": 1,
+                "score_anamnesis": 1,
+                "score_inspection": 1,
+                "score_dynamic": 1,
+                "score_diagnosis": 1,
+                "score_recommendations": 1,
+                "score_structure": 1,
+                "issues": "Ошибка структурированного ответа LLM",
+                "summary": "Не удалось получить валидный структурированный ответ от LLM",
+            }
+        return parsed.model_dump()
 
-        result = JudgeResult(
-            verdict=verdict,
-            explanation=str(payload.get("explanation", "")),
-            citations=list(payload.get("citations", [])),
-            missing_info=list(payload.get("missing_info", [])),
-            recommended_action=payload.get("recommended_action"),
-            raw_output=payload,
-        )
-
-        self.store.store_verdict_evaluation(
-            doc_id=doc_id,
-            verdict_text=verdict_text,
-            retrieved_chunk_ids=[c.chunk_id for c in packed],
-            llm_output=payload,
-            model_name=self.settings.ollama_chat_model,
-        )
-        log.info("Verdict evaluation finished doc_id=%s verdict=%s citations=%d", doc_id, result.verdict.value, len(result.citations))
-        return result
-
-    def _subqueries(self, text: str) -> list[str]:
-        entities = re.findall(r"\b[А-ЯA-Z][а-яa-zA-Z0-9\-]{2,}\b", text)
-        uniq = []
-        for e in entities:
-            if e not in uniq:
-                uniq.append(e)
-        return uniq[:4]
-
-    def _build_prompt(self, doc_id: str, verdict_text: str, chunks: list[Any]) -> str:
-        context_parts = []
-        for c in chunks:
-            context_parts.append(
-                f"[chunk_id={c.chunk_id}] [section={c.section_path}] [pages={c.page_start}-{c.page_end}] [type={c.chunk_type}]\n{c.chunk_text}"
-            )
-        context = "\n\n".join(context_parts)
-        return (
-            "Ты медицинский ассистент для проверки клинического вердикта. Оцени вердикт врача только по приведенным фрагментам. "
-            "Если данных недостаточно, верни insufficient_info. Не используй внешние знания.\n\n"
-            f"doc_id: {doc_id}\n"
-            f"Текст вердикта врача: {verdict_text}\n\n"
-            "Контекстные фрагменты:\n"
-            f"{context}\n\n"
-            "Ответь только JSON-объектом по схеме:\n"
-            "{"
-            '\"verdict\": \"correct|partially_correct|incorrect|insufficient_info\",'
-            '\"explanation\": \"краткое объяснение\",'
-            '\"citations\": [{\"chunk_id\":\"...\",\"section_path\":\"...\",\"pages\":\"x-y\"}],'
-            '\"missing_info\": [\"...\"],'
-            '\"recommended_action\": \"рекомендуемое действие\"'
-            "}"
-        )
+    def _to_chunk_dict(self, chunk: Any) -> dict[str, Any]:
+        return {
+            "chunk_id": chunk.chunk_id,
+            "section_path": chunk.section_path,
+            "page_start": chunk.page_start,
+            "page_end": chunk.page_end,
+            "chunk_type": chunk.chunk_type.value if hasattr(chunk.chunk_type, "value") else str(chunk.chunk_type),
+            "chunk_text": chunk.chunk_text,
+        }

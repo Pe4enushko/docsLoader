@@ -131,3 +131,16 @@ def upsert_medkard_rows(conn, rows: list[tuple]) -> None:
     """
     with conn.cursor() as cur:
         cur.executemany(sql, rows)
+
+
+def is_visit_processed(conn, visit_guid_1c: str) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            'SELECT 1 FROM public."MedKard" WHERE visit_guid_1c = %s LIMIT 1',
+            (visit_guid_1c,),
+        )
+        return cur.fetchone() is not None
+
+
+def upsert_medkard_row(conn, row: tuple) -> None:
+    upsert_medkard_rows(conn, [row])

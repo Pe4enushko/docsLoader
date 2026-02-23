@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -16,13 +16,6 @@ class ChunkType(str, Enum):
     EVIDENCE = "evidence"
     APPENDIX = "appendix"
     OTHER = "other"
-
-
-class VerdictLabel(str, Enum):
-    CORRECT = "correct"
-    PARTIALLY_CORRECT = "partially_correct"
-    INCORRECT = "incorrect"
-    INSUFFICIENT_INFO = "insufficient_info"
 
 
 @dataclass(slots=True)
@@ -94,16 +87,6 @@ class ChunkRecord:
     order: int = 0
 
 
-@dataclass(slots=True)
-class JudgeResult:
-    verdict: VerdictLabel
-    explanation: str
-    citations: list[dict[str, Any]]
-    missing_info: list[str]
-    recommended_action: str | None
-    raw_output: dict[str, Any] = field(default_factory=dict)
-
-
 class ApiJudgeOutput(BaseModel):
     overall_score: int = Field(ge=1, le=5)
     risk_level: Literal["low", "medium", "high"]
@@ -117,16 +100,3 @@ class ApiJudgeOutput(BaseModel):
     issues: str
     summary: str
 
-
-class VerdictJudgeCitation(BaseModel):
-    chunk_id: str
-    section_path: str
-    pages: str
-
-
-class VerdictJudgeOutput(BaseModel):
-    verdict: Literal["correct", "partially_correct", "incorrect", "insufficient_info"]
-    explanation: str
-    citations: list[VerdictJudgeCitation] = Field(default_factory=list)
-    missing_info: list[str] = Field(default_factory=list)
-    recommended_action: str | None = None
