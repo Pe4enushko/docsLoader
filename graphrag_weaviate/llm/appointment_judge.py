@@ -170,6 +170,7 @@ class AppointmentJudge:
             model=settings.ollama_chat_model,
             base_url=settings.ollama_chat_base_url,
             temperature=0.0,
+            num_ctx=settings.ollama_chat_num_ctx,
         )
         self.structured = self.chat.with_structured_output(ApiJudgeOutput, include_raw=True)
 

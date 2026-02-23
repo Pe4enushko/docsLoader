@@ -18,6 +18,7 @@ class Settings:
     ollama_chat_model: str = os.getenv("OLLAMA_CHAT_MODEL", "llama3.1:8b")
     ollama_embed_base_url: str | None = os.getenv("OLLAMA_EMBED_BASE_URL")
     ollama_chat_base_url: str | None = os.getenv("OLLAMA_CHAT_BASE_URL")
+    ollama_chat_num_ctx: int = int(os.getenv("OLLAMA_CHAT_NUM_CTX", "32768"))
     ingest_checkpoint_file: str = os.getenv("INGEST_CHECKPOINT_FILE", ".graphrag_ingest_checkpoint.json")
     k_initial: int = 32
     k_top: int = 12
