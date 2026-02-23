@@ -55,14 +55,31 @@ class AppointmentJudge:
         context_target: int,
     ) -> tuple[dict[str, Any], list[str]]:
         queries = self.build_kg_queries(appointment=appointment, mkb_codes=mkb_codes)
+        log.info("KG evaluation started doc_id=%s queries=%s", doc_id, json.dumps(queries, ensure_ascii=False))
         dedup: dict[str, Any] = {}
         for query in queries:
-            for chunk in self.retrieval.retrieve_context(doc_id=doc_id, query=query):
+            query_chunks = self.retrieval.retrieve_context(doc_id=doc_id, query=query)
+            log.info("KG query doc_id=%s query=%s retrieved=%d", doc_id, truncate_text(query, 240), len(query_chunks))
+            for chunk in query_chunks:
                 best = dedup.get(chunk.chunk_id)
                 if best is None or chunk.score > best.score:
                     dedup[chunk.chunk_id] = chunk
 
         top_chunks = sorted(dedup.values(), key=lambda c: c.score, reverse=True)[:context_target]
+        for idx, chunk in enumerate(top_chunks[: min(6, len(top_chunks))], start=1):
+            snippet = truncate_text(str(getattr(chunk, "chunk_text", "")), 180)
+            log.info(
+                "KG context #%d doc_id=%s chunk_id=%s section=%s pages=%s-%s type=%s score=%.4f snippet=%s",
+                idx,
+                doc_id,
+                getattr(chunk, "chunk_id", ""),
+                getattr(chunk, "section_path", ""),
+                getattr(chunk, "page_start", ""),
+                getattr(chunk, "page_end", ""),
+                getattr(getattr(chunk, "chunk_type", ""), "value", str(getattr(chunk, "chunk_type", ""))),
+                float(getattr(chunk, "score", 0.0) or 0.0),
+                snippet,
+            )
         context_chunks = [self._to_chunk_dict(c) for c in top_chunks]
         prompt = (
             f"{self.system_prompt}\n\n"
@@ -75,7 +92,9 @@ class AppointmentJudge:
             f"JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}\n\n"
             f"Контекст KG:\n{json.dumps(context_chunks, ensure_ascii=False, indent=2)}"
         )
-        return self._invoke_structured(prompt), [c["chunk_id"] for c in context_chunks if c.get("chunk_id")]
+        result = self._invoke_structured(prompt)
+        log.info("KG evaluation finished doc_id=%s context_chunks=%d", doc_id, len(context_chunks))
+        return result, [c["chunk_id"] for c in context_chunks if c.get("chunk_id")]
 
     def merge_base_and_kg(self, base_scores: dict[str, Any], kg_scores: dict[str, Any]) -> dict[str, Any]:
         out = dict(base_scores)

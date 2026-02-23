@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any
 
 from evaluateVerdict import (
-    LOG_FILE,
     MANIFEST_PATH,
     SCORES_SYSTEM_PROMPT,
     build_row_for_medkard,
@@ -21,6 +20,7 @@ from graphrag_weaviate.storage import WeaviateGraphStore
 from medkard_postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_row
 
 TEST_JSON_PATH = "testjson.json"
+TEST_LOG_FILE = "logs/run_testjson_pipeline.log"
 
 
 def load_appointments_from_file(path: str) -> list[dict[str, Any]]:
@@ -36,7 +36,7 @@ def load_appointments_from_file(path: str) -> list[dict[str, Any]]:
 
 
 def main() -> None:
-    setup_logging(LOG_FILE)
+    setup_logging(TEST_LOG_FILE)
     log = logging.getLogger(__name__)
 
     settings = Settings()
