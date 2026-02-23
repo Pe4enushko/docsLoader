@@ -25,8 +25,8 @@ from medkard_postgres import connect_postgres, ensure_medkard_table, upsert_medk
 
 MANIFEST_PATH = os.getenv("MANIFEST_PATH", "manifest.csv")
 ONE_C_APPOINTMENTS_URL = os.getenv("ONE_C_APPOINTMENTS_URL", "<ONE_C_APPOINTMENTS_URL>")
-ONE_C_LOGIN = os.getenv("ONE_C_LOGIN") or os.getenv("ONE_C_USERNAME") or os.getenv("LOGIN") or ""
-ONE_C_PASSWORD = os.getenv("ONE_C_PASSWORD") or os.getenv("PASSWORD") or ""
+ONE_C_LOGIN = os.getenv("ONE_C_LOGIN") or ""
+ONE_C_PASSWORD = os.getenv("ONE_C_PASSWORD") or ""
 ONE_C_TIMEOUT_SECONDS = float(os.getenv("ONE_C_TIMEOUT_SECONDS", "15"))
 LOG_FILE = "logs/docsToGraphRAG.log"
 CONTEXT_TARGET = int(os.getenv("CONTEXT_TARGET", "10"))
@@ -44,7 +44,7 @@ def fetch_appointments_from_1c() -> list[dict[str, Any]]:
     if not ONE_C_APPOINTMENTS_URL or ONE_C_APPOINTMENTS_URL.startswith("<"):
         raise ValueError("Set real ONE_C_APPOINTMENTS_URL in environment")
     if not ONE_C_LOGIN or not ONE_C_PASSWORD:
-        raise ValueError("ONE_C_LOGIN and ONE_C_PASSWORD (or LOGIN/PASSWORD) must be set")
+        raise ValueError("ONE_C_LOGIN and ONE_C_PASSWORD must be set")
 
     basic_token = base64.b64encode(f"{ONE_C_LOGIN}:{ONE_C_PASSWORD}".encode("utf-8")).decode("ascii")
     current_day = datetime.now().strftime("%d.%m.%Y")
