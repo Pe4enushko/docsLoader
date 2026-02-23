@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import base64
 import csv
 import json
 import logging
 import os
 import re
-import urllib.error
-import urllib.parse
-import urllib.request
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from graphrag_weaviate.config import Settings
+from graphrag_weaviate.integrations.one_c import OneCClient
 from graphrag_weaviate.llm import AppointmentJudge, normalize_mkb_code
 from graphrag_weaviate.logging_utils import setup_logging
 from graphrag_weaviate.retrieval import RetrievalService
@@ -21,43 +18,13 @@ from graphrag_weaviate.storage import WeaviateGraphStore
 from medkard_postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_row
 
 MANIFEST_PATH = os.getenv("MANIFEST_PATH", "manifest.csv")
-ONE_C_APPOINTMENTS_URL = os.getenv("ONE_C_APPOINTMENTS_URL", "<ONE_C_APPOINTMENTS_URL>")
-ONE_C_LOGIN = os.getenv("ONE_C_LOGIN") or ""
-ONE_C_PASSWORD = os.getenv("ONE_C_PASSWORD") or ""
-ONE_C_TIMEOUT_SECONDS = float(os.getenv("ONE_C_TIMEOUT_SECONDS", "15"))
 LOG_FILE = "logs/docsToGraphRAG.log"
 CONTEXT_TARGET = int(os.getenv("CONTEXT_TARGET", "8"))
 
 
 def fetch_appointments_from_1c() -> list[dict[str, Any]]:
-    if not ONE_C_APPOINTMENTS_URL or ONE_C_APPOINTMENTS_URL.startswith("<"):
-        raise ValueError("Set real ONE_C_APPOINTMENTS_URL in environment")
-    if not ONE_C_LOGIN or not ONE_C_PASSWORD:
-        raise ValueError("ONE_C_LOGIN and ONE_C_PASSWORD must be set")
-
-    basic_token = base64.b64encode(f"{ONE_C_LOGIN}:{ONE_C_PASSWORD}".encode("utf-8")).decode("ascii")
-    current_day = datetime.now().strftime("%d.%m.%Y")
-    query_params = urllib.parse.urlencode({"datebegin": current_day, "dateend": current_day})
-    separator = "&" if "?" in ONE_C_APPOINTMENTS_URL else "?"
-    request_url = f"{ONE_C_APPOINTMENTS_URL}{separator}{query_params}"
-
-    request = urllib.request.Request(
-        request_url,
-        headers={"Accept": "application/json", "Authorization": f"Basic {basic_token}"},
-        method="GET",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=ONE_C_TIMEOUT_SECONDS) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"Failed to fetch appointments from 1C: {exc}") from exc
-
-    if not isinstance(payload, dict):
-        raise ValueError("HTTP response must be JSON object with 'appointments'")
-    appointments = payload.get("appointments")
-    if not isinstance(appointments, list):
-        raise ValueError("HTTP response must contain 'appointments' array")
-    return [item for item in appointments if isinstance(item, dict)]
+    client = OneCClient.from_env()
+    return client.fetch_appointments_for_today()
 
 
 def split_manifest_mkb(raw: str) -> list[str]:
