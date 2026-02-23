@@ -3,3 +3,4 @@ langchain-ollama>=0.2.0
 pymupdf>=1.24.0
 python-dotenv>=1.0.1
 pydantic>=2.8.0
+postgres-graph-rag>=0.1.2

@@ -10,8 +10,8 @@ from langchain_ollama import OllamaEmbeddings
 from weaviate.exceptions import WeaviateInvalidInputError
 from weaviate.classes.config import Configure, DataType, Property
 
-from .config import Settings
-from .models import ChunkRecord, ChunkType
+from ..config import Settings
+from ..models import ChunkRecord, ChunkType
 from .storage_queries import WeaviateQueryMixin
 from .storage_upsert import WeaviateUpsertMixin
 

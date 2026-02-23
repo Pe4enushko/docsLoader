@@ -11,11 +11,11 @@ from evaluateVerdict import (
     extract_visit_guid,
     load_manifest_mkb_index,
 )
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.llm import AppointmentJudge
-from graphrag_weaviate.logging_utils import setup_logging
-from graphrag_weaviate.retrieval import RetrievalService
-from graphrag_weaviate.storage import WeaviateGraphStore
+from engine.config import Settings
+from engine.llm import AppointmentJudge
+from engine.logging_utils import setup_logging
+from engine.graphrag import RetrievalService, WeaviateKnowledgeGraphAdapter
+from engine.weaviate import WeaviateGraphStore
 
 TEST_JSON_PATH = "testjson.json"
 TEST_LOG_FILE = "logs/run_testjson_pipeline.log"
@@ -40,7 +40,8 @@ def main() -> None:
     settings = Settings()
     store = WeaviateGraphStore(settings)
     try:
-        retrieval = RetrievalService(store, settings)
+        adapter = WeaviateKnowledgeGraphAdapter(store)
+        retrieval = RetrievalService(adapter, settings)
         judge = AppointmentJudge(retrieval=retrieval, settings=settings)
         manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)
         appointments = load_appointments_from_file(TEST_JSON_PATH)

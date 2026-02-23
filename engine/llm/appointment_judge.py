@@ -7,10 +7,10 @@ from typing import Any
 
 from langchain_ollama import ChatOllama
 
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.models import ApiJudgeOutput
-from graphrag_weaviate.retrieval import RetrievalService
-from graphrag_weaviate.utils import truncate_text
+from engine.config import Settings
+from engine.graphrag import RetrievalService
+from engine.models import ApiJudgeOutput
+from engine.utils import truncate_text
 
 log = logging.getLogger(__name__)
 

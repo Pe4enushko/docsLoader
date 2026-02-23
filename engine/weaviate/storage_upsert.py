@@ -7,8 +7,8 @@ from typing import Any
 import weaviate
 from weaviate.classes.query import Filter
 
-from .models import Chunk, Document, Recommendation, Section
-from .utils import stable_hash
+from ..models import Chunk, Document, Recommendation, Section
+from ..utils import stable_hash
 
 log = logging.getLogger(__name__)
 

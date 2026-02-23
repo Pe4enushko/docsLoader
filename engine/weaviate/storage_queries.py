@@ -5,7 +5,7 @@ import logging
 import weaviate
 from weaviate.classes.query import Filter, MetadataQuery
 
-from .models import ChunkRecord
+from ..models import ChunkRecord
 
 log = logging.getLogger(__name__)
 

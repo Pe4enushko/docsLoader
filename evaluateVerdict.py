@@ -9,12 +9,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.integrations.one_c import OneCClient
-from graphrag_weaviate.llm import AppointmentJudge, normalize_mkb_code
-from graphrag_weaviate.logging_utils import setup_logging
-from graphrag_weaviate.retrieval import RetrievalService
-from graphrag_weaviate.storage import WeaviateGraphStore
+from engine.config import Settings
+from engine.integrations.one_c import OneCClient
+from engine.llm import AppointmentJudge, normalize_mkb_code
+from engine.logging_utils import setup_logging
+from engine.graphrag import RetrievalService, WeaviateKnowledgeGraphAdapter
+from engine.weaviate import WeaviateGraphStore
 from medkard_postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_row
 
 MANIFEST_PATH = os.getenv("MANIFEST_PATH", "manifest.csv")
@@ -162,7 +162,8 @@ def main() -> None:
     settings = Settings()
     store = WeaviateGraphStore(settings)
     try:
-        retrieval = RetrievalService(store, settings)
+        adapter = WeaviateKnowledgeGraphAdapter(store)
+        retrieval = RetrievalService(adapter, settings)
         judge = AppointmentJudge(retrieval=retrieval, settings=settings)
 
         manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)

@@ -9,8 +9,8 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from .ingestion_adapter import IngestionAdapter
 from .models import Chunk, ChunkType, Document, Recommendation, Section
-from .storage import WeaviateGraphStore
 from .utils import estimate_tokens, load_json, normalize_space, save_json, stable_hash
 
 log = logging.getLogger(__name__)
@@ -23,8 +23,8 @@ BLOCK_START_RE = re.compile(
 
 
 class IngestionService:
-    def __init__(self, store: WeaviateGraphStore, checkpoint_file: str = ".graphrag_ingest_checkpoint.json"):
-        self.store = store
+    def __init__(self, adapter: IngestionAdapter, checkpoint_file: str = ".graphrag_ingest_checkpoint.json"):
+        self.adapter = adapter
         self.checkpoint_path = Path(checkpoint_file)
 
     def ingest(self, input_dir: str, manifest_path: str) -> dict[str, Any]:
@@ -107,7 +107,7 @@ class IngestionService:
         pages = self._extract_pages(pdf_path)
         doc_hash = stable_hash("\n".join([p["text"] for p in pages]))
 
-        if self.store.find_document_by_hash(doc_hash):
+        if self.adapter.find_document_by_hash(doc_hash):
             log.info("Skip duplicate document hash doc_id=%s", doc_id)
             return {
                 "doc_id": doc_id,
@@ -126,12 +126,12 @@ class IngestionService:
             metadata_json=json.dumps(meta, ensure_ascii=False),
             hash=doc_hash,
         )
-        self.store.upsert_document(doc)
+        self.adapter.upsert_document(doc)
 
         sections = self._detect_sections(pdf_path, pages, doc_id)
         section_lookup: dict[str, str] = {}
         for section in sections:
-            section_id = self.store.upsert_section(section)
+            section_id = self.adapter.upsert_section(section)
             section_lookup[section.path] = section_id
 
         chunks = self._chunk_sections(pages, sections, doc_id)
@@ -141,16 +141,16 @@ class IngestionService:
             chunk.section_path = chunk.section_path or "document"
             chunk.token_count = chunk.token_count or estimate_tokens(chunk.chunk_text)
             total_tokens += chunk.token_count
-            embedding = self.store.embed_text(chunk.chunk_text)
-            chunk_id = self.store.upsert_chunk(chunk, embedding=embedding)
+            embedding = self.adapter.embed_text(chunk.chunk_text)
+            chunk_id = self.adapter.upsert_chunk(chunk, embedding=embedding)
             section_id = section_lookup.get(chunk.section_path)
             if section_id:
-                self.store.link_chunk_to_section(chunk_id, section_id)
-            self.store.link_chunk_to_document(chunk_id, doc_id)
+                self.adapter.link_chunk_to_section(chunk_id, section_id)
+            self.adapter.link_chunk_to_document(chunk_id, doc_id)
             if chunk.chunk_type in {ChunkType.RECOMMENDATION, ChunkType.ALGORITHM}:
                 rec = Recommendation(statement=chunk.chunk_text)
-                rec_id = self.store.upsert_recommendation(rec, doc_id=doc_id)
-                self.store.link_recommendation_to_chunk(rec_id, chunk_id)
+                rec_id = self.adapter.upsert_recommendation(rec, doc_id=doc_id)
+                self.adapter.link_recommendation_to_chunk(rec_id, chunk_id)
 
         result = {
             "doc_id": doc_id,
