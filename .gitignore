@@ -6,3 +6,5 @@
 *.pyd
 manifest.csv
 testjson.json
+*.log
+*.out
