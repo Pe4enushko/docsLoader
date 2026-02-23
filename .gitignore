@@ -4,3 +4,5 @@
 *.pyc
 *.pyo
 *.pyd
+manifest.csv
+testjson.json
