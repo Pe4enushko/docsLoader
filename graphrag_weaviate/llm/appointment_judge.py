@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_ollama import ChatOllama
@@ -159,6 +160,10 @@ risk_level:
 
 def normalize_mkb_code(code: str) -> str:
     return code.strip().upper().replace(" ", "")
+
+
+def _word_count(text: str) -> int:
+    return len(re.findall(r"\S+", text or ""))
 
 
 class AppointmentJudge:
@@ -320,9 +325,9 @@ class AppointmentJudge:
 
     def _invoke_structured(self, prompt: str, request_name: str) -> dict[str, Any]:
         log.info(
-            "LLM request started type=%s prompt_len=%d prompt_snippet=%s",
+            "LLM request started type=%s prompt_words=%d prompt_snippet=%s",
             request_name,
-            len(prompt),
+            _word_count(prompt),
             truncate_text(prompt, 500),
         )
         resp = self.structured.invoke(prompt)

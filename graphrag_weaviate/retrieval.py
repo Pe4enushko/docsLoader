@@ -109,7 +109,7 @@ class RetrievalService:
         doc_id: str,
         query: str,
     ) -> list[ChunkRecord]:
-        log.info("Retrieve context start doc_id=%s query_len=%d", doc_id, len(query))
+        log.info("Retrieve context start doc_id=%s query_words=%d", doc_id, self._word_count(query))
         candidates = self.store.hybrid_search_chunks(
             doc_id=doc_id,
             query=query,
@@ -140,3 +140,6 @@ class RetrievalService:
             if w not in seen:
                 seen.append(w)
         return seen
+
+    def _word_count(self, text: str) -> int:
+        return len(re.findall(r"\S+", text or ""))
