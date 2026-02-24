@@ -21,7 +21,7 @@ from engine.retrieval import RetrievalService
 from engine.storage import WeaviateGraphStore
 from engine.postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_rows
 
-SOURCE_JSON_PATH = "../data.json"
+SOURCE_JSON_PATH = "../parseddata.json"
 LOG_FILE = "logs/run_file_verdict_to_db_pipeline.log"
 CONCURRENCY_N = 2
 
