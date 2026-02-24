@@ -238,7 +238,8 @@ class AppointmentJudge:
             "Ссылаясь на рекоммендации в issues/summary, указывай только читаемые метаданные: "
             "раздел (section_path), страницы (page_start-page_end) и тип фрагмента (chunk_type). Обязательно переводи метаданные в человекочитаемый вид, не используй технические названия полей. "
             "Не используй chunk_id в тексте ответа.\n "
-            "Всегда указывай ссылки на контекст (он же клинические рекоммендации). Наименование, id, взятые разделы документа пиши в конце. Обязательно переводи метаданные в человекочитаемый вид на русском языке, не используй технические названия полей.\n\n"
+            "Всегда указывай ссылки на контекст (он же клинические рекоммендации). "
+            "Обязательно переводи метаданные в человекочитаемый вид на русском языке, не используй технические названия полей.\n\n"
             f"doc_id рекомендаций: {doc_id}\n"
             f"Наименование документа: {doc_title or 'не указано'}\n"
             f"МКБ в записи: {', '.join(mkb_codes)}\n"
@@ -248,6 +249,7 @@ class AppointmentJudge:
         )
         result = self._invoke_structured(prompt, request_name="kg_evaluation")
         log.info("KG evaluation finished doc_id=%s context_chunks=%d", doc_id, len(context_chunks))
+        result["summary"] = f"{result.get('summary', '').strip()}\nДокументы: {doc_id} — {doc_title or 'не указано'}".strip()
         return result, [getattr(c, "chunk_id", "") for c in top_chunks if getattr(c, "chunk_id", "")]
 
     def merge_base_and_kg(self, base_scores: dict[str, Any], kg_scores: dict[str, Any]) -> dict[str, Any]:
