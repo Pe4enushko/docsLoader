@@ -36,7 +36,7 @@ def main() -> None:
     try:
         retrieval = RetrievalService(store, settings)
         judge = AppointmentJudge(retrieval=retrieval, settings=settings)
-        manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)
+        manifest_exact, manifest_group, manifest_titles = load_manifest_mkb_index(MANIFEST_PATH)
         appointments = load_appointments_from_file(TEST_JSON_PATH)
 
         processed = 0
@@ -50,6 +50,7 @@ def main() -> None:
                 appointment=item,
                 manifest_exact=manifest_exact,
                 manifest_group=manifest_group,
+                manifest_titles=manifest_titles,
             )
             processed += 1
 

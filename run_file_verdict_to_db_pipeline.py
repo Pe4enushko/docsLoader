@@ -36,6 +36,7 @@ def evaluate_single_appointment(
     appointment: dict[str, Any],
     manifest_exact: dict[str, str],
     manifest_group: dict[str, str],
+    manifest_titles: dict[str, str],
 ) -> MedKardRow:
     # Separate store/judge per task avoids sharing non-thread-safe clients between concurrent workers.
     store = WeaviateGraphStore(settings)
@@ -47,6 +48,7 @@ def evaluate_single_appointment(
             appointment=appointment,
             manifest_exact=manifest_exact,
             manifest_group=manifest_group,
+            manifest_titles=manifest_titles,
         )
     finally:
         store.close()
@@ -58,7 +60,7 @@ def main() -> None:
 
     settings = Settings()
     try:
-        manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)
+        manifest_exact, manifest_group, manifest_titles = load_manifest_mkb_index(MANIFEST_PATH)
         appointments = load_appointments_from_file(SOURCE_JSON_PATH)
 
         with connect_postgres() as conn:
@@ -100,6 +102,7 @@ def main() -> None:
                                 appointment,
                                 manifest_exact,
                                 manifest_group,
+                                manifest_titles,
                             )
                         return idx, visit_guid, row, None
                     except Exception as exc:
