@@ -321,7 +321,75 @@ class AppointmentJudge:
         return uniq[:7]
 
     def render_human_readable(self, appointment: dict[str, Any]) -> str:
-        return json.dumps(appointment, ensure_ascii=False, indent=2)
+        lines: list[str] = []
+
+        for key, value in appointment.items():
+            if key == "ДанныеОсмотра" and isinstance(value, list):
+                lines.append("ДанныеОсмотра:")
+                for item in value:
+                    if not isinstance(item, dict):
+                        lines.append(f"- {self._format_scalar(item)}")
+                        continue
+                    param = str(item.get("Параметр", "")).strip()
+                    val = str(item.get("Значение", "")).strip()
+                    if param or val:
+                        lines.append(f"{param}: {val}".strip(": ").strip())
+                    else:
+                        lines.append("-")
+                lines.append("")
+                continue
+
+            lines.extend(self._format_block(key, value))
+            lines.append("")
+
+        return "\n".join(line for line in lines).strip()
+
+    def _format_block(self, key: str, value: Any) -> list[str]:
+        out: list[str] = [f"{key}:"]
+        if isinstance(value, dict):
+            for sub_key, sub_value in value.items():
+                out.extend(self._format_kv(sub_key, sub_value))
+            return out
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    for sub_key, sub_value in item.items():
+                        out.extend(self._format_kv(sub_key, sub_value))
+                    out.append("")
+                else:
+                    out.append(f"- {self._format_scalar(item)}")
+            if out and out[-1] == "":
+                out.pop()
+            return out
+        out.append(self._format_scalar(value))
+        return out
+
+    def _format_kv(self, key: str, value: Any) -> list[str]:
+        if isinstance(value, dict):
+            out: list[str] = [f"{key}:"]
+            for sub_key, sub_value in value.items():
+                out.extend(self._format_kv(sub_key, sub_value))
+            return out
+        if isinstance(value, list):
+            out = [f"{key}:"]
+            for item in value:
+                if isinstance(item, dict):
+                    for sub_key, sub_value in item.items():
+                        out.extend(self._format_kv(sub_key, sub_value))
+                    out.append("")
+                else:
+                    out.append(f"- {self._format_scalar(item)}")
+            if out and out[-1] == "":
+                out.pop()
+            return out
+        return [f"{key}: {self._format_scalar(value)}"]
+
+    def _format_scalar(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value).strip()
 
     def _invoke_structured(self, prompt: str, request_name: str) -> dict[str, Any]:
         log.info(

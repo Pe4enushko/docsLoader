@@ -23,7 +23,7 @@ from engine.postgres import connect_postgres, ensure_medkard_table, is_visit_pro
 
 SOURCE_JSON_PATH = "../data.json"
 LOG_FILE = "logs/run_file_verdict_to_db_pipeline.log"
-CONCURRENCY_N = 4
+CONCURRENCY_N = 2
 
 
 def load_appointments_from_file(path: str) -> list[dict[str, Any]]:
