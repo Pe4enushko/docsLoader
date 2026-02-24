@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 from urllib.parse import quote_plus
 
@@ -19,6 +20,7 @@ POSTGRES_USER = os.getenv("POSTGRES_USER", "")
 POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "")
 POSTGRES_DB = os.getenv("POSTGRES_DB", "")
 POSTGRES_SSLMODE = os.getenv("POSTGRES_SSLMODE", "prefer")
+log = logging.getLogger(__name__)
 
 
 def build_postgres_dsn() -> str:
@@ -44,11 +46,21 @@ def build_postgres_dsn() -> str:
 
 def connect_postgres():
     dsn = build_postgres_dsn()
-    if psycopg is not None:
-        return psycopg.connect(dsn)
-    if psycopg2 is not None:
-        return psycopg2.connect(dsn)
-    raise RuntimeError("Neither psycopg nor psycopg2 is installed")
+    host = POSTGRES_HOST.strip()
+    port = str(POSTGRES_PORT).strip()
+    db = POSTGRES_DB.strip()
+    sslmode = POSTGRES_SSLMODE.strip() or "prefer"
+    try:
+        if psycopg is not None:
+            log.info("Connecting to Postgres via psycopg host=%s port=%s db=%s sslmode=%s", host, port, db, sslmode)
+            return psycopg.connect(dsn)
+        if psycopg2 is not None:
+            log.info("Connecting to Postgres via psycopg2 host=%s port=%s db=%s sslmode=%s", host, port, db, sslmode)
+            return psycopg2.connect(dsn)
+        raise RuntimeError("Neither psycopg nor psycopg2 is installed")
+    except Exception:
+        log.exception("Postgres connection failed host=%s port=%s db=%s sslmode=%s", host, port, db, sslmode)
+        raise
 
 
 def ensure_medkard_table(conn) -> None:
@@ -78,12 +90,18 @@ def ensure_medkard_table(conn) -> None:
       CONSTRAINT "MedKard_visit_guid_1c_key" UNIQUE (visit_guid_1c)
     ) TABLESPACE pg_default;
     """
-    with conn.cursor() as cur:
-        cur.execute(create_sql)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(create_sql)
+        log.info('Ensured Postgres table exists: public."MedKard"')
+    except Exception:
+        log.exception('Failed to ensure Postgres table public."MedKard"')
+        raise
 
 
 def upsert_medkard_rows(conn, rows: list[tuple]) -> None:
     if not rows:
+        log.debug("Skipping MedKard upsert: empty rows batch")
         return
     sql = """
     INSERT INTO public."MedKard" (
@@ -129,17 +147,39 @@ def upsert_medkard_rows(conn, rows: list[tuple]) -> None:
       human_readable = EXCLUDED.human_readable,
       patient = EXCLUDED.patient
     """
-    with conn.cursor() as cur:
-        cur.executemany(sql, rows)
+    visit_guids = [str(r[0]) for r in rows if len(r) > 0]
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(sql, rows)
+        log.info(
+            'Upserted MedKard rows count=%d first_visit_guid=%s last_visit_guid=%s',
+            len(rows),
+            visit_guids[0] if visit_guids else "",
+            visit_guids[-1] if visit_guids else "",
+        )
+    except Exception:
+        log.exception(
+            'Failed MedKard upsert rows count=%d first_visit_guid=%s last_visit_guid=%s',
+            len(rows),
+            visit_guids[0] if visit_guids else "",
+            visit_guids[-1] if visit_guids else "",
+        )
+        raise
 
 
 def is_visit_processed(conn, visit_guid_1c: str) -> bool:
-    with conn.cursor() as cur:
-        cur.execute(
-            'SELECT 1 FROM public."MedKard" WHERE visit_guid_1c = %s LIMIT 1',
-            (visit_guid_1c,),
-        )
-        return cur.fetchone() is not None
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                'SELECT 1 FROM public."MedKard" WHERE visit_guid_1c = %s LIMIT 1',
+                (visit_guid_1c,),
+            )
+            processed = cur.fetchone() is not None
+        log.debug("Checked MedKard existing visit_guid=%s processed=%s", visit_guid_1c, processed)
+        return processed
+    except Exception:
+        log.exception("Failed MedKard processed check visit_guid=%s", visit_guid_1c)
+        raise
 
 
 def upsert_medkard_row(conn, row: tuple) -> None:
