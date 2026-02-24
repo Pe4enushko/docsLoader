@@ -199,7 +199,12 @@ class AppointmentJudge:
         context_target: int,
     ) -> tuple[dict[str, Any], list[str]]:
         queries = self.build_kg_queries(appointment=appointment, mkb_codes=mkb_codes)
-        log.info("KG evaluation started doc_id=%s queries=%s", doc_id, json.dumps(queries, ensure_ascii=False))
+        log.info(
+            "KG evaluation started doc_id=%s doc_title=%s queries=%s",
+            doc_id,
+            doc_title or "<missing>",
+            json.dumps(queries, ensure_ascii=False),
+        )
         dedup: dict[str, Any] = {}
         for query in queries:
             query_chunks = self.retrieval.retrieve_context(doc_id=doc_id, query=query)
@@ -238,7 +243,7 @@ class AppointmentJudge:
             f"МКБ в записи: {', '.join(mkb_codes)}\n"
             f"Поисковые запросы:\n{json.dumps(queries, ensure_ascii=False, indent=2)}\n\n"
             f"JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}\n\n"
-            f"Контекст KG:\n{json.dumps(context_chunks, ensure_ascii=False, indent=2)}"
+            f"Контекст:\n{json.dumps(context_chunks, ensure_ascii=False, indent=2)}"
         )
         result = self._invoke_structured(prompt, request_name="kg_evaluation")
         log.info("KG evaluation finished doc_id=%s context_chunks=%d", doc_id, len(context_chunks))
