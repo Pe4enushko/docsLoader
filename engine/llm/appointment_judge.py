@@ -193,6 +193,7 @@ class AppointmentJudge:
     def evaluate_with_kg(
         self,
         doc_id: str,
+        doc_title: str | None,
         appointment: dict[str, Any],
         mkb_codes: list[str],
         context_target: int,
@@ -229,10 +230,11 @@ class AppointmentJudge:
             "Этап 2. Проверка с клиническими рекомендациями из knowledge graph.\n"
             "Особенно проверь корректность осмотра, диагноза и рекомендаций относительно контекста.\n"
             "risk_level = юридический риск некорректного заполнения документации (low|medium|high).\n\n"
-            "Если ссылаешься на рекомендации в issues/summary, указывай только читаемые метаданные: "
-            "раздел (section_path), страницы (page_start-page_end) и тип фрагмента (chunk_type). "
-            "Не используй chunk_id в тексте ответа.\n\n"
+            "Ссылаясь на рекоммендации в issues/summary, указывай только читаемые метаданные: "
+            "раздел (section_path), страницы (page_start-page_end) и тип фрагмента (chunk_type). Обязательно переводи метаданные в человекочитаемый вид, не используй технические названия полей. "
+            "Не используй chunk_id в тексте ответа. Всегда указывай данные о частях документа, на которые ссылкешься. Наименование, id, взятые разделы документа пиши в конце\n\n"
             f"doc_id рекомендаций: {doc_id}\n"
+            f"Наименование документа: {doc_title or 'не указано'}\n"
             f"МКБ в записи: {', '.join(mkb_codes)}\n"
             f"Поисковые запросы:\n{json.dumps(queries, ensure_ascii=False, indent=2)}\n\n"
             f"JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}\n\n"

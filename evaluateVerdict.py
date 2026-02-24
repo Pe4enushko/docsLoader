@@ -41,22 +41,26 @@ def split_manifest_mkb(raw: str) -> list[str]:
     return out
 
 
-def load_manifest_mkb_index(path: str) -> tuple[dict[str, str], dict[str, str]]:
+def load_manifest_mkb_index(path: str) -> tuple[dict[str, str], dict[str, str], dict[str, str]]:
     exact: dict[str, str] = {}
     group: dict[str, str] = {}
+    titles_by_doc_id: dict[str, str] = {}
     manifest_path = Path(path)
     if not manifest_path.exists():
-        return exact, group
+        return exact, group, titles_by_doc_id
     with manifest_path.open("r", encoding="utf-8-sig", newline="") as f:
         reader = csv.DictReader(f)
         for row in reader:
             doc_id = str(row.get("ID") or row.get("doc_id") or "").strip()
             if not doc_id:
                 continue
+            title = str(row.get("Наименование") or row.get("title") or "").strip()
+            if title:
+                titles_by_doc_id.setdefault(doc_id, title)
             for code in split_manifest_mkb(str(row.get("МКБ-10") or row.get("MKB-10") or "")):
                 exact.setdefault(code, doc_id)
                 group.setdefault(code.split(".", 1)[0], doc_id)
-    return exact, group
+    return exact, group, titles_by_doc_id
 
 
 def extract_mkb_codes(appointment: dict[str, Any]) -> list[str]:
@@ -107,24 +111,26 @@ def build_row_for_medkard(
     appointment: dict[str, Any],
     manifest_exact: dict[str, str],
     manifest_group: dict[str, str],
+    manifest_titles: dict[str, str],
 ) -> MedKardRow:
     mkb_codes = extract_mkb_codes(appointment)
-    base_scores = judge.evaluate_base(appointment=appointment, mkb_codes=mkb_codes)
-
-    final_scores = base_scores
     doc_id = resolve_doc_id_by_mkb(mkb_codes, manifest_exact, manifest_group)
     if mkb_codes and doc_id:
+        doc_title = manifest_titles.get(doc_id)
         kg_scores, _ = judge.evaluate_with_kg(
             doc_id=doc_id,
+            doc_title=doc_title,
             appointment=appointment,
             mkb_codes=mkb_codes,
             context_target=CONTEXT_TARGET,
         )
-        final_scores = judge.merge_base_and_kg(base_scores=base_scores, kg_scores=kg_scores)
-    elif mkb_codes and not doc_id:
-        note = "МКБ найден, но не сопоставлен с manifest.csv; KG-проверка пропущена"
-        existing = str(base_scores.get("issues", "")).strip()
-        final_scores["issues"] = f"{existing}; {note}" if existing else note
+        final_scores = kg_scores
+    else:
+        final_scores = judge.evaluate_base(appointment=appointment, mkb_codes=mkb_codes)
+        if mkb_codes and not doc_id:
+            note = "МКБ найден, но не сопоставлен с manifest.csv; KG-проверка пропущена"
+            existing = str(final_scores.get("issues", "")).strip()
+            final_scores["issues"] = f"{existing}; {note}" if existing else note
 
     human_readable = judge.render_human_readable(appointment=appointment)
 
@@ -176,7 +182,7 @@ def main() -> None:
         retrieval = RetrievalService(store, settings)
         judge = AppointmentJudge(retrieval=retrieval, settings=settings)
 
-        manifest_exact, manifest_group = load_manifest_mkb_index(MANIFEST_PATH)
+        manifest_exact, manifest_group, manifest_titles = load_manifest_mkb_index(MANIFEST_PATH)
         appointments = fetch_appointments_from_1c()
 
         with connect_postgres() as conn:
@@ -196,6 +202,7 @@ def main() -> None:
                     appointment=item,
                     manifest_exact=manifest_exact,
                     manifest_group=manifest_group,
+                    manifest_titles=manifest_titles,
                 )
                 upsert_medkard_row(conn, row)
                 conn.commit()
