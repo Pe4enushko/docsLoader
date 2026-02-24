@@ -52,23 +52,6 @@ def evaluate_single_appointment(
         store.close()
 
 
-async def evaluate_with_limit(
-    semaphore: asyncio.Semaphore,
-    settings: Settings,
-    appointment: dict[str, Any],
-    manifest_exact: dict[str, str],
-    manifest_group: dict[str, str],
-) -> MedKardRow:
-    async with semaphore:
-        return await asyncio.to_thread(
-            evaluate_single_appointment,
-            settings,
-            appointment,
-            manifest_exact,
-            manifest_group,
-        )
-
-
 def main() -> None:
     setup_logging(LOG_FILE)
     log = logging.getLogger(__name__)
@@ -110,13 +93,14 @@ def main() -> None:
                     appointment: dict[str, Any],
                 ) -> tuple[int, str, MedKardRow | None, Exception | None]:
                     try:
-                        row = await evaluate_with_limit(
-                            semaphore=semaphore,
-                            settings=settings,
-                            appointment=appointment,
-                            manifest_exact=manifest_exact,
-                            manifest_group=manifest_group,
-                        )
+                        async with semaphore:
+                            row = await asyncio.to_thread(
+                                evaluate_single_appointment,
+                                settings,
+                                appointment,
+                                manifest_exact,
+                                manifest_group,
+                            )
                         return idx, visit_guid, row, None
                     except Exception as exc:
                         return idx, visit_guid, None, exc
