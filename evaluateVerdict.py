@@ -9,6 +9,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from graphrag_weaviate.appointments import (
+    extract_visit_date_raw,
+    extract_visit_guid as shared_extract_visit_guid,
+)
 from graphrag_weaviate.config import Settings
 from graphrag_weaviate.integrations.one_c import OneCClient
 from graphrag_weaviate.llm import AppointmentJudge, normalize_mkb_code
@@ -123,8 +127,7 @@ def build_row_for_medkard(
 
     human_readable = judge.render_human_readable(appointment=appointment)
 
-    visit = appointment.get("Прием") if isinstance(appointment.get("Прием"), dict) else {}
-    visit_guid = str(visit.get("GUID", "")).strip()
+    visit_guid = shared_extract_visit_guid(appointment)
     if not visit_guid:
         raise ValueError("Missing Прием.GUID for appointment")
 
@@ -144,15 +147,14 @@ def build_row_for_medkard(
         json.dumps(appointment.get("ДанныеОсмотра"), ensure_ascii=False) if appointment.get("ДанныеОсмотра") is not None else None,
         json.dumps(appointment.get("Диагнозы"), ensure_ascii=False) if appointment.get("Диагнозы") is not None else None,
         json.dumps(appointment.get("Услуги"), ensure_ascii=False) if appointment.get("Услуги") is not None else None,
-        parse_visit_date(visit.get("DATE")),
+        parse_visit_date(extract_visit_date_raw(appointment)),
         human_readable or None,
         json.dumps(appointment.get("Пациент"), ensure_ascii=False) if appointment.get("Пациент") is not None else None,
     )
 
 
 def extract_visit_guid(appointment: dict[str, Any]) -> str:
-    visit = appointment.get("Прием") if isinstance(appointment.get("Прием"), dict) else {}
-    return str(visit.get("GUID", "")).strip()
+    return shared_extract_visit_guid(appointment)
 
 
 def main() -> None:

@@ -9,14 +9,7 @@ import urllib.request
 from datetime import datetime
 from typing import Any
 
-
-def parse_appointments_payload(payload: Any) -> list[dict[str, Any]]:
-    if not isinstance(payload, dict):
-        raise ValueError("HTTP response must be JSON object with 'appointments'")
-    appointments = payload.get("appointments")
-    if not isinstance(appointments, list):
-        raise ValueError("HTTP response must contain 'appointments' array")
-    return [item for item in appointments if isinstance(item, dict)]
+from graphrag_weaviate.appointments import parse_appointments_payload
 
 
 class OneCClient:
@@ -41,7 +34,7 @@ class OneCClient:
             timeout_seconds=float(os.getenv("ONE_C_TIMEOUT_SECONDS", "15")),
         )
 
-    def fetch_payload_for_today(self) -> tuple[dict[str, Any], int]:
+    def fetch_payload_for_today(self) -> tuple[Any, int]:
         if not self.url or self.url.startswith("<"):
             raise ValueError("Set real ONE_C_APPOINTMENTS_URL in environment")
         if not self.login or not self.password:
@@ -68,4 +61,3 @@ class OneCClient:
     def fetch_appointments_for_today(self) -> list[dict[str, Any]]:
         payload, _ = self.fetch_payload_for_today()
         return parse_appointments_payload(payload)
-

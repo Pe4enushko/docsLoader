@@ -12,6 +12,7 @@ from evaluateVerdict import (
     extract_visit_guid,
     load_manifest_mkb_index,
 )
+from graphrag_weaviate.appointments import parse_appointments_payload
 from graphrag_weaviate.config import Settings
 from graphrag_weaviate.llm import AppointmentJudge
 from graphrag_weaviate.logging_utils import setup_logging
@@ -26,14 +27,7 @@ CONCURRENCY_N = 4
 
 def load_appointments_from_file(path: str) -> list[dict[str, Any]]:
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
-    if isinstance(payload, dict):
-        appointments = payload.get("appointments")
-        if isinstance(appointments, list):
-            return [item for item in appointments if isinstance(item, dict)]
-        return [payload]
-    if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
-    raise ValueError("Input JSON must be object, appointments wrapper, or array")
+    return parse_appointments_payload(payload)
 
 
 def chunked_rows(rows: list[tuple], size: int) -> list[list[tuple]]:
