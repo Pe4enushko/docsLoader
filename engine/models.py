@@ -87,6 +87,50 @@ class ChunkRecord:
     order: int = 0
 
 
+@dataclass(slots=True)
+class MedKardRow:
+    visit_guid_1c: str
+    score_visit_identification: int
+    score_anamnes: int
+    score_inspection: int
+    score_dynamic: int
+    score_diagnosis: int
+    score_recommendations: int
+    score_structure: int
+    issues: str | None
+    summary: str | None
+    score_overall: int
+    risk_level: str
+    inspection_data: str | None
+    diagnosis_data: str | None
+    services_data: str | None
+    visit_date: str | None
+    human_readable: str | None
+    patient: str | None
+
+    def to_db_tuple(self) -> tuple:
+        return (
+            self.visit_guid_1c,
+            self.score_visit_identification,
+            self.score_anamnes,
+            self.score_inspection,
+            self.score_dynamic,
+            self.score_diagnosis,
+            self.score_recommendations,
+            self.score_structure,
+            self.issues,
+            self.summary,
+            self.score_overall,
+            self.risk_level,
+            self.inspection_data,
+            self.diagnosis_data,
+            self.services_data,
+            self.visit_date,
+            self.human_readable,
+            self.patient,
+        )
+
+
 class ApiJudgeOutput(BaseModel):
     overall_score: int = Field(ge=1, le=5)
     risk_level: Literal["low", "medium", "high"]
@@ -99,4 +143,3 @@ class ApiJudgeOutput(BaseModel):
     score_structure: int = Field(ge=1, le=5)
     issues: str
     summary: str
-

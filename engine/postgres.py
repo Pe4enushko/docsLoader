@@ -4,6 +4,8 @@ import logging
 import os
 from urllib.parse import quote_plus
 
+from engine.models import MedKardRow
+
 try:
     import psycopg  # type: ignore
 except ImportError:  # pragma: no cover
@@ -99,7 +101,19 @@ def ensure_medkard_table(conn) -> None:
         raise
 
 
-def upsert_medkard_rows(conn, rows: list[tuple]) -> None:
+def _to_db_tuple(row: MedKardRow | tuple) -> tuple:
+    if isinstance(row, MedKardRow):
+        return row.to_db_tuple()
+    return row
+
+
+def _get_visit_guid(row: MedKardRow | tuple) -> str:
+    if isinstance(row, MedKardRow):
+        return row.visit_guid_1c
+    return str(row[0]).strip() if len(row) > 0 else ""
+
+
+def upsert_medkard_rows(conn, rows: list[MedKardRow | tuple]) -> None:
     if not rows:
         log.debug("Skipping MedKard upsert: empty rows batch")
         return
@@ -147,23 +161,21 @@ def upsert_medkard_rows(conn, rows: list[tuple]) -> None:
       human_readable = EXCLUDED.human_readable,
       patient = EXCLUDED.patient
     """
-    visit_guids = [str(r[0]) for r in rows if len(r) > 0]
     try:
         with conn.cursor() as cur:
-            cur.executemany(sql, rows)
-        log.info(
-            'Upserted MedKard rows count=%d first_visit_guid=%s last_visit_guid=%s',
-            len(rows),
-            visit_guids[0] if visit_guids else "",
-            visit_guids[-1] if visit_guids else "",
-        )
+            for idx, row in enumerate(rows):
+                visit_guid = _get_visit_guid(row)
+                row_tuple = _to_db_tuple(row)
+                log.info("MedKard upsert try index=%d visit_guid=%s", idx, visit_guid or "<missing>")
+                try:
+                    cur.execute(sql, row_tuple)
+                    log.info("MedKard upsert success index=%d visit_guid=%s", idx, visit_guid or "<missing>")
+                except Exception:
+                    log.exception("MedKard upsert failed index=%d visit_guid=%s", idx, visit_guid or "<missing>")
+                    raise
+        log.info("Upserted MedKard rows batch count=%d", len(rows))
     except Exception:
-        log.exception(
-            'Failed MedKard upsert rows count=%d first_visit_guid=%s last_visit_guid=%s',
-            len(rows),
-            visit_guids[0] if visit_guids else "",
-            visit_guids[-1] if visit_guids else "",
-        )
+        log.exception("Failed MedKard upsert batch count=%d", len(rows))
         raise
 
 
@@ -182,5 +194,5 @@ def is_visit_processed(conn, visit_guid_1c: str) -> bool:
         raise
 
 
-def upsert_medkard_row(conn, row: tuple) -> None:
+def upsert_medkard_row(conn, row: MedKardRow | tuple) -> None:
     upsert_medkard_rows(conn, [row])

@@ -9,17 +9,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from graphrag_weaviate.appointments import (
+from engine.appointments import (
     extract_visit_date_raw,
     extract_visit_guid as shared_extract_visit_guid,
 )
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.integrations.one_c import OneCClient
-from graphrag_weaviate.llm import AppointmentJudge, normalize_mkb_code
-from graphrag_weaviate.logging_utils import setup_logging
-from graphrag_weaviate.retrieval import RetrievalService
-from graphrag_weaviate.storage import WeaviateGraphStore
-from medkard_postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_row
+from engine.config import Settings
+from engine.integrations.one_c import OneCClient
+from engine.llm import AppointmentJudge, normalize_mkb_code
+from engine.logging_utils import setup_logging
+from engine.models import MedKardRow
+from engine.retrieval import RetrievalService
+from engine.storage import WeaviateGraphStore
+from engine.postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_row
 
 MANIFEST_PATH = os.getenv("MANIFEST_PATH", "manifest.csv")
 LOG_FILE = "logs/docsToGraphRAG.log"
@@ -106,7 +107,7 @@ def build_row_for_medkard(
     appointment: dict[str, Any],
     manifest_exact: dict[str, str],
     manifest_group: dict[str, str],
-) -> tuple:
+) -> MedKardRow:
     mkb_codes = extract_mkb_codes(appointment)
     base_scores = judge.evaluate_base(appointment=appointment, mkb_codes=mkb_codes)
 
@@ -131,25 +132,33 @@ def build_row_for_medkard(
     if not visit_guid:
         raise ValueError("Missing Прием.GUID for appointment")
 
-    return (
-        visit_guid,
-        int(final_scores["score_visit_identification"]),
-        int(final_scores["score_anamnesis"]),
-        int(final_scores["score_inspection"]),
-        int(final_scores["score_dynamic"]),
-        int(final_scores["score_diagnosis"]),
-        int(final_scores["score_recommendations"]),
-        int(final_scores["score_structure"]),
-        str(final_scores.get("issues", "")).strip() or None,
-        str(final_scores.get("summary", "")).strip() or None,
-        int(final_scores["overall_score"]),
-        str(final_scores["risk_level"]),
-        json.dumps(appointment.get("ДанныеОсмотра"), ensure_ascii=False) if appointment.get("ДанныеОсмотра") is not None else None,
-        json.dumps(appointment.get("Диагнозы"), ensure_ascii=False) if appointment.get("Диагнозы") is not None else None,
-        json.dumps(appointment.get("Услуги"), ensure_ascii=False) if appointment.get("Услуги") is not None else None,
-        parse_visit_date(extract_visit_date_raw(appointment)),
-        human_readable or None,
-        json.dumps(appointment.get("Пациент"), ensure_ascii=False) if appointment.get("Пациент") is not None else None,
+    return MedKardRow(
+        visit_guid_1c=visit_guid,
+        score_visit_identification=int(final_scores["score_visit_identification"]),
+        score_anamnes=int(final_scores["score_anamnesis"]),
+        score_inspection=int(final_scores["score_inspection"]),
+        score_dynamic=int(final_scores["score_dynamic"]),
+        score_diagnosis=int(final_scores["score_diagnosis"]),
+        score_recommendations=int(final_scores["score_recommendations"]),
+        score_structure=int(final_scores["score_structure"]),
+        issues=str(final_scores.get("issues", "")).strip() or None,
+        summary=str(final_scores.get("summary", "")).strip() or None,
+        score_overall=int(final_scores["overall_score"]),
+        risk_level=str(final_scores["risk_level"]),
+        inspection_data=json.dumps(appointment.get("ДанныеОсмотра"), ensure_ascii=False)
+        if appointment.get("ДанныеОсмотра") is not None
+        else None,
+        diagnosis_data=json.dumps(appointment.get("Диагнозы"), ensure_ascii=False)
+        if appointment.get("Диагнозы") is not None
+        else None,
+        services_data=json.dumps(appointment.get("Услуги"), ensure_ascii=False)
+        if appointment.get("Услуги") is not None
+        else None,
+        visit_date=parse_visit_date(extract_visit_date_raw(appointment)),
+        human_readable=human_readable or None,
+        patient=json.dumps(appointment.get("Пациент"), ensure_ascii=False)
+        if appointment.get("Пациент") is not None
+        else None,
     )
 
 

@@ -11,12 +11,12 @@ from evaluateVerdict import (
     extract_visit_guid,
     load_manifest_mkb_index,
 )
-from graphrag_weaviate.appointments import parse_appointments_payload
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.llm import AppointmentJudge
-from graphrag_weaviate.logging_utils import setup_logging
-from graphrag_weaviate.retrieval import RetrievalService
-from graphrag_weaviate.storage import WeaviateGraphStore
+from engine.appointments import parse_appointments_payload
+from engine.config import Settings
+from engine.llm import AppointmentJudge
+from engine.logging_utils import setup_logging
+from engine.retrieval import RetrievalService
+from engine.storage import WeaviateGraphStore
 
 TEST_JSON_PATH = "testjson.json"
 TEST_LOG_FILE = "logs/run_testjson_pipeline.log"

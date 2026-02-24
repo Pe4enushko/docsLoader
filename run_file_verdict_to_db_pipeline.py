@@ -12,13 +12,14 @@ from evaluateVerdict import (
     extract_visit_guid,
     load_manifest_mkb_index,
 )
-from graphrag_weaviate.appointments import parse_appointments_payload
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.llm import AppointmentJudge
-from graphrag_weaviate.logging_utils import setup_logging
-from graphrag_weaviate.retrieval import RetrievalService
-from graphrag_weaviate.storage import WeaviateGraphStore
-from medkard_postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_rows
+from engine.appointments import parse_appointments_payload
+from engine.config import Settings
+from engine.llm import AppointmentJudge
+from engine.logging_utils import setup_logging
+from engine.models import MedKardRow
+from engine.retrieval import RetrievalService
+from engine.storage import WeaviateGraphStore
+from engine.postgres import connect_postgres, ensure_medkard_table, is_visit_processed, upsert_medkard_rows
 
 SOURCE_JSON_PATH = "../data.json"
 LOG_FILE = "logs/run_file_verdict_to_db_pipeline.log"
@@ -30,7 +31,7 @@ def load_appointments_from_file(path: str) -> list[dict[str, Any]]:
     return parse_appointments_payload(payload)
 
 
-def chunked_rows(rows: list[tuple], size: int) -> list[list[tuple]]:
+def chunked_rows(rows: list[MedKardRow], size: int) -> list[list[MedKardRow]]:
     return [rows[i : i + size] for i in range(0, len(rows), size)]
 
 
@@ -39,7 +40,7 @@ def evaluate_single_appointment(
     appointment: dict[str, Any],
     manifest_exact: dict[str, str],
     manifest_group: dict[str, str],
-) -> tuple:
+) -> MedKardRow:
     # Separate store/judge per task avoids sharing non-thread-safe clients between concurrent workers.
     store = WeaviateGraphStore(settings)
     try:
@@ -61,7 +62,7 @@ async def evaluate_with_limit(
     appointment: dict[str, Any],
     manifest_exact: dict[str, str],
     manifest_group: dict[str, str],
-) -> tuple:
+) -> MedKardRow:
     async with semaphore:
         return await asyncio.to_thread(
             evaluate_single_appointment,
@@ -78,7 +79,7 @@ async def evaluate_appointments_async(
     manifest_exact: dict[str, str],
     manifest_group: dict[str, str],
     concurrency_n: int,
-) -> list[tuple | Exception]:
+) -> list[MedKardRow | Exception]:
     semaphore = asyncio.Semaphore(max(1, concurrency_n))
     tasks = [
         asyncio.create_task(
@@ -112,7 +113,7 @@ def main() -> None:
                 concurrency_n=CONCURRENCY_N,
             )
         )
-        rows: list[tuple] = []
+        rows: list[MedKardRow] = []
         failed = 0
         for idx, result in enumerate(eval_results):
             if isinstance(result, Exception):
@@ -152,7 +153,7 @@ def main() -> None:
                 upsert_medkard_rows(conn, batch)
                 conn.commit()
                 upserted += len(batch)
-            verified = sum(1 for row in rows if is_visit_processed(conn, str(row[0])))
+            verified = sum(1 for row in rows if is_visit_processed(conn, row.visit_guid_1c))
 
         print(
             json.dumps(

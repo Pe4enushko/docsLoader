@@ -9,7 +9,7 @@ import urllib.request
 from datetime import datetime
 from typing import Any
 
-from graphrag_weaviate.appointments import parse_appointments_payload
+from engine.appointments import parse_appointments_payload
 
 
 class OneCClient:

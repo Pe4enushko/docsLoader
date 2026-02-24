@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from graphrag_weaviate.config import Settings  # noqa: F401  # loads .env
-from medkard_postgres import connect_postgres
+from engine.config import Settings  # noqa: F401  # loads .env
+from engine.postgres import connect_postgres
 
 INIT_SQL_PATH = Path("sql/init_medkard.sql")
 

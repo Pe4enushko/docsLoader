@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import logging
 
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.ingestion import IngestionService
-from graphrag_weaviate.logging_utils import setup_logging
-from graphrag_weaviate.storage import WeaviateGraphStore
+from engine.config import Settings
+from engine.ingestion import IngestionService
+from engine.logging_utils import setup_logging
+from engine.storage import WeaviateGraphStore
 
 # Edit values below before running.
 INPUT_PDF_DIR = "./pdfs"

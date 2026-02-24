@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-from graphrag_weaviate.integrations.one_c import OneCClient, parse_appointments_payload
+from engine.integrations.one_c import OneCClient, parse_appointments_payload
 
 try:
     from dotenv import load_dotenv

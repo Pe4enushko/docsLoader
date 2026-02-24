@@ -7,8 +7,8 @@ from urllib.parse import urlparse
 
 import weaviate
 
-from graphrag_weaviate.config import Settings
-from graphrag_weaviate.logging_utils import setup_logging
+from engine.config import Settings
+from engine.logging_utils import setup_logging
 
 # Destructive operation. Edit before running if needed.
 LOG_FILE = "logs/reset_graph_rag.log"

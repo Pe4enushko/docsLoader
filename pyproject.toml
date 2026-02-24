@@ -17,4 +17,4 @@ dependencies = [
 ]
 
 [tool.setuptools]
-packages = ["graphrag_weaviate"]
+packages = ["engine"]
