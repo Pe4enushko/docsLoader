@@ -14,8 +14,8 @@ dependencies = [
   "pymupdf>=1.24.0",
   "python-dotenv>=1.0.1",
   "pydantic>=2.8.0",
-  "postgres-graph-rag>=0.1.2",
+  "psycopg2-binary>=2.9.9",
 ]
 
 [tool.setuptools]
-packages = ["engine", "engine.llm", "engine.graphrag", "engine.integrations", "engine.integrations.one_c", "engine.weaviate"]
+packages = ["engine", "engine.llm", "engine.graphrag", "engine.integrations", "engine.integrations.one_c", "engine.weaviate", "engine.postgres", "engine.postgres.queries", "engine.postgres.queries.insert", "engine.postgres.queries.delete", "engine.postgres.queries.search"]

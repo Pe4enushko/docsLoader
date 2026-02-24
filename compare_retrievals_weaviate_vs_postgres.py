@@ -67,6 +67,9 @@ def main() -> None:
     settings = Settings()
     queries = load_queries(QUERIES_FILE)
 
+    if PgvectorAgeAdapter is None:
+        raise RuntimeError("Postgres adapter is unavailable. Install psycopg2-binary.")
+
     weav_store = WeaviateGraphStore(settings)
     pg_adapter = PgvectorAgeAdapter(dsn=build_graphrag_postgres_dsn(), settings=settings)
     chat = ChatOllama(
