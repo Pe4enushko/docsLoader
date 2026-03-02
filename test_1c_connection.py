@@ -18,7 +18,7 @@ OUTPUT_FILE = os.getenv("ONE_C_TEST_OUTPUT_FILE", "one_c_response.json")
 
 def main() -> None:
     client = OneCClient.from_env()
-    payload, status = client.fetch_payload_for_today()
+    payload, status = client.fetch_payload_for_period(datebegin="26.02.2026", dateend="01.02.2024")
     appointments = parse_appointments_payload(payload)
     out = json.dumps(payload, ensure_ascii=False, indent=2)
 
