@@ -40,6 +40,18 @@ class PostgresGraphStore:
     def _vector_literal(self, values: list[float]) -> str:
         return "[" + ",".join(f"{float(v):.8f}" for v in values) + "]"
 
+    def _sanitize_text(self, value: str) -> str:
+        return value.replace("\x00", "").replace("\\u0000", "")
+
+    def _sanitize_json_value(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self._sanitize_text(value)
+        if isinstance(value, list):
+            return [self._sanitize_json_value(v) for v in value]
+        if isinstance(value, dict):
+            return {self._sanitize_text(str(k)): self._sanitize_json_value(v) for k, v in value.items()}
+        return value
+
     def _execute(self, sql: str, params: tuple[Any, ...] = ()) -> None:
         with self.conn.cursor() as cur:
             cur.execute(sql, params)
@@ -174,10 +186,11 @@ class PostgresGraphStore:
         embedding: list[float],
         metadata: dict[str, Any] | None = None,
     ) -> str:
+        clean_metadata = self._sanitize_json_value(metadata or {})
         with self.conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(
                 UPSERT_NODE_SQL,
-                (namespace, content, self._vector_literal(embedding), Json(metadata or {})),
+                (namespace, content, self._vector_literal(embedding), Json(clean_metadata)),
             )
             row = cur.fetchone()
         self.conn.commit()
@@ -192,10 +205,11 @@ class PostgresGraphStore:
         weight: float = 1.0,
         metadata: dict[str, Any] | None = None,
     ) -> None:
+        clean_metadata = self._sanitize_json_value(metadata or {})
         with self.conn.cursor() as cur:
             cur.execute(
                 UPSERT_EDGE_SQL,
-                (namespace, source_id, target_id, relation, float(weight), Json(metadata or {})),
+                (namespace, source_id, target_id, relation, float(weight), Json(clean_metadata)),
             )
         self.conn.commit()
 
