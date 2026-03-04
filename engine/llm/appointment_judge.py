@@ -9,7 +9,7 @@ from langchain_ollama import ChatOllama
 
 from engine.config import Settings
 from engine.graphrag import RetrievalService
-from engine.models import ApiJudgeOutput
+from engine.models import ApiJudgeOutput, KgQueryListOutput
 from engine.utils import truncate_text
 
 log = logging.getLogger(__name__)
@@ -157,6 +157,29 @@ risk_level:
 - Никакого текста вне JSON не добавляй.
 """.strip()
 
+KG_QUERY_SYSTEM_PROMPT = """
+Ты генерируешь поисковые запросы для медицинского knowledge graph по уже известному диагнозу.
+Диагноз не повторяй как отдельный запрос.
+
+Правила:
+1) Каждый запрос должен содержать клиническую сущность и тип клинического правила.
+Допустимые сущности: симптом, препарат, лабораторный тест, процедура, клиническое правило.
+2) Длина запроса: 3-10 слов.
+3) Один запрос = одна цель. Не смешивай несколько целей в одном запросе.
+4) Обязательно указывай тип правила, например:
+диагностика, критерии, показания, лечение, дозировка, длительность лечения,
+максимальная доза, противопоказания, красные флаги.
+5) Если назначены препараты, обязательно добавь запросы по:
+дозировке, кратности, длительности, максимальной дозе, педиатрической дозировке (если применимо).
+6) Не используй не-клинический нарратив из записи:
+«не отягощен», «контакта с больными не было» и т.п.
+7) Верни 3-7 запросов.
+8) Язык запросов: русский.
+9) Запросы должны быть пригодны для поиска рекомендаций, а не для пересказа карты.
+10) Назначенные препараты, режим и длительность извлекай только смысловым анализом JSON приёма.
+Никаких регулярных выражений, шаблонного парсинга и угадывания по отдельным словам.
+""".strip()
+
 
 def normalize_mkb_code(code: str) -> str:
     return code.strip().upper().replace(" ", "")
@@ -178,6 +201,7 @@ class AppointmentJudge:
             num_ctx=settings.ollama_chat_num_ctx,
         )
         self.structured = self.chat.with_structured_output(ApiJudgeOutput, include_raw=True)
+        self.query_builder = self.chat.with_structured_output(KgQueryListOutput, include_raw=True)
 
     def evaluate_base(self, appointment: dict[str, Any], mkb_codes: list[str]) -> dict[str, Any]:
         prompt = (
@@ -278,47 +302,49 @@ class AppointmentJudge:
         return out
 
     def build_kg_queries(self, appointment: dict[str, Any], mkb_codes: list[str]) -> list[str]:
-        queries: list[str] = []
         diagnosis = appointment.get("Диагнозы")
-        if isinstance(diagnosis, list):
-            for item in diagnosis:
-                if not isinstance(item, dict):
-                    continue
-                combined = " ".join(
-                    part
-                    for part in [
-                        normalize_mkb_code(str(item.get("КодМКБ", ""))),
-                        str(item.get("НаименованиеМКБ", "")).strip(),
-                        str(item.get("Детализация", "")).strip(),
-                    ]
-                    if part
-                ).strip()
-                if combined:
-                    queries.append(combined)
+        if not (isinstance(diagnosis, list) and diagnosis):
+            return []
+        return self._generate_kg_queries(appointment=appointment, mkb_codes=mkb_codes)
 
-        inspection = appointment.get("ДанныеОсмотра")
-        if isinstance(inspection, list):
-            for item in inspection:
-                if not isinstance(item, dict):
-                    continue
-                param = str(item.get("Параметр", "")).lower()
-                value = str(item.get("Значение", "")).strip()
-                if not value:
-                    continue
-                if "рекомендац" in param or "осмотр" in param or "динамик" in param or "анамн" in param:
-                    queries.append(value[:500])
+    def _generate_kg_queries(self, appointment: dict[str, Any], mkb_codes: list[str]) -> list[str]:
+        diagnosis_payload = appointment.get("Диагнозы")
+        prompt = (
+            f"{KG_QUERY_SYSTEM_PROMPT}\n\n"
+            f"МКБ коды: {', '.join(mkb_codes) if mkb_codes else 'не указаны'}\n\n"
+            f"Диагнозы из карты:\n{json.dumps(diagnosis_payload, ensure_ascii=False, indent=2)}\n\n"
+            f"Полный JSON приёма:\n{json.dumps(appointment, ensure_ascii=False, indent=2)}\n\n"
+            "Сгенерируй список поисковых запросов для извлечения клинических правил из knowledge graph."
+        )
+        resp = self.query_builder.invoke(prompt)
+        raw = resp.get("raw") if isinstance(resp, dict) else None
+        parsed = resp.get("parsed") if isinstance(resp, dict) else None
+        parse_error = resp.get("parsing_error") if isinstance(resp, dict) else None
 
-        if mkb_codes:
-            queries.append(" ".join(mkb_codes))
-        if not queries:
-            queries.append(json.dumps(appointment, ensure_ascii=False)[:1000])
+        raw_text = getattr(raw, "content", str(raw)) if raw is not None else ""
+        if raw_text:
+            log.info("KG query-builder raw answer: %s", truncate_text(str(raw_text), 500))
+        if parse_error:
+            log.error("KG query-builder parsing error: %s", parse_error)
+        if parsed is None:
+            raise RuntimeError("KG query-builder returned no structured result")
 
-        uniq: list[str] = []
-        for q in queries:
-            qn = q.strip()
-            if qn and qn not in uniq:
-                uniq.append(qn)
-        return uniq[:7]
+        out: list[str] = []
+        for query in parsed.queries:
+            cleaned = " ".join(str(query).strip().split())
+            if not cleaned:
+                continue
+            words = len(cleaned.split())
+            if words > 10:
+                cleaned = " ".join(cleaned.split()[:10])
+                words = len(cleaned.split())
+            if words < 3:
+                continue
+            if cleaned not in out:
+                out.append(cleaned)
+        if len(out) < 3:
+            raise RuntimeError("KG query-builder returned less than 3 valid queries")
+        return out[:7]
 
     def render_human_readable(self, appointment: dict[str, Any]) -> str:
         return json.dumps(appointment, ensure_ascii=False, indent=2)
@@ -337,7 +363,7 @@ class AppointmentJudge:
 
         raw_text = getattr(raw, "content", str(raw)) if raw is not None else ""
         if raw_text:
-            log.info("LLM raw answer type=%s: %s", request_name, str(raw_text))
+            log.info("LLM raw answer type=%s: %s", request_name, truncate_text(str(raw_text), 800))
         if parse_error:
             log.error("Structured output parsing error type=%s: %s", request_name, parse_error)
 

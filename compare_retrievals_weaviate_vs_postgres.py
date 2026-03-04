@@ -12,7 +12,7 @@ from engine.logging_utils import setup_logging
 from engine.models import ChunkRecord
 from engine.weaviate import WeaviateGraphStore
 
-QUERIES_FILE = "retrieval_test_queries.txt"
+QUERIES_FILE = "retrieval_test_queries.generated.txt"
 LOG_FILE = "logs/compare_retrievals_weaviate_vs_postgres.log"
 
 

@@ -100,3 +100,6 @@ class ApiJudgeOutput(BaseModel):
     issues: str
     summary: str
 
+
+class KgQueryListOutput(BaseModel):
+    queries: list[str] = Field(min_length=3, max_length=7)
