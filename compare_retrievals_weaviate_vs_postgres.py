@@ -130,86 +130,88 @@ def main() -> None:
         weav_retrieval = RetrievalService(WeaviateKnowledgeGraphAdapter(weav_store), settings)
         pg_retrieval = RetrievalService(pg_adapter, settings)
 
-        results: list[dict[str, object]] = []
-        idx = 0
-        for row in dataset_rows:
-            doc_id = row["doc_id"]
+        fieldnames = [
+            "doc_id",
+            "query",
+            "postgres_score",
+            "weaviate_score",
+            "postgres_speed",
+            "weaviate_speed",
+        ]
+        results_path = Path(RESULTS_FILE)
+        should_write_header = (not results_path.exists()) or results_path.stat().st_size == 0
+        queries_total = 0
 
-            for query in row["queries"]:
-                idx += 1
+        with results_path.open("a", encoding="utf-8", newline="") as out_fh:
+            writer = csv.DictWriter(out_fh, fieldnames=fieldnames, delimiter="|")
+            if should_write_header:
+                writer.writeheader()
 
-                weav_start = time.time()
-                weav_chunks = weav_retrieval.retrieve_context(doc_id=doc_id, query=query)
-                weav_end = time.time()
-                weav_speed = round(weav_end - weav_start, 6)
+            idx = 0
+            for row in dataset_rows:
+                doc_id = row["doc_id"]
 
-                pg_start = time.time()
-                pg_chunks = pg_retrieval.retrieve_context(doc_id=doc_id, query=query)
-                pg_end = time.time()
-                pg_speed = round(pg_end - pg_start, 6)
+                for query in row["queries"]:
+                    idx += 1
+                    queries_total += 1
 
-                weav_ctx = to_context(weav_chunks)
-                pg_ctx = to_context(pg_chunks)
-                judge_text = judge_compare(chat, doc_id=doc_id, query=query, weav_ctx=weav_ctx, pg_ctx=pg_ctx)
-                judge_text = remove_think_blocks(judge_text)
+                    weav_start = time.time()
+                    weav_chunks = weav_retrieval.retrieve_context(doc_id=doc_id, query=query)
+                    weav_end = time.time()
+                    weav_speed = round(weav_end - weav_start, 6)
 
-                parsed: dict[str, object] = {}
-                json_text = extract_first_json_object(judge_text)
-                if json_text:
-                    try:
-                        parsed_json = json.loads(json_text)
-                        if isinstance(parsed_json, dict):
-                            parsed = parsed_json
-                    except json.JSONDecodeError:
-                        parsed = {}
+                    pg_start = time.time()
+                    pg_chunks = pg_retrieval.retrieve_context(doc_id=doc_id, query=query)
+                    pg_end = time.time()
+                    pg_speed = round(pg_end - pg_start, 6)
 
-                postgres_score = clamp_percent(parsed.get("postgres_score"))
-                weaviate_score = clamp_percent(parsed.get("weaviate_score"))
+                    weav_ctx = to_context(weav_chunks)
+                    pg_ctx = to_context(pg_chunks)
+                    judge_text = judge_compare(chat, doc_id=doc_id, query=query, weav_ctx=weav_ctx, pg_ctx=pg_ctx)
+                    judge_text = remove_think_blocks(judge_text)
 
-                item = {
-                    "doc_id": doc_id,
-                    "query": query,
-                    "postgres_score": postgres_score,
-                    "weaviate_score": weaviate_score,
-                    "postgres_speed": pg_speed,
-                    "weaviate_speed": weav_speed,
-                }
-                results.append(item)
-                print(json.dumps(item, ensure_ascii=False, indent=2))
-                log.info(
-                    "Compared retrieval idx=%d doc_id=%s postgres_score=%d weaviate_score=%d postgres_speed=%.6f weaviate_speed=%.6f",
-                    idx,
-                    doc_id,
-                    postgres_score,
-                    weaviate_score,
-                    pg_speed,
-                    weav_speed,
-                )
-                if not json_text:
-                    log.warning("Judge output has no JSON object for idx=%d: %s", idx, judge_text)
+                    parsed: dict[str, object] = {}
+                    json_text = extract_first_json_object(judge_text)
+                    if json_text:
+                        try:
+                            parsed_json = json.loads(json_text)
+                            if isinstance(parsed_json, dict):
+                                parsed = parsed_json
+                        except json.JSONDecodeError:
+                            parsed = {}
 
-        with Path(RESULTS_FILE).open("w", encoding="utf-8", newline="") as fh:
-            writer = csv.DictWriter(
-                fh,
-                fieldnames=[
-                    "doc_id",
-                    "query",
-                    "postgres_score",
-                    "weaviate_score",
-                    "postgres_speed",
-                    "weaviate_speed",
-                ],
-                delimiter="|",
-            )
-            writer.writeheader()
-            writer.writerows(results)
+                    postgres_score = clamp_percent(parsed.get("postgres_score"))
+                    weaviate_score = clamp_percent(parsed.get("weaviate_score"))
+
+                    item = {
+                        "doc_id": doc_id,
+                        "query": query,
+                        "postgres_score": postgres_score,
+                        "weaviate_score": weaviate_score,
+                        "postgres_speed": pg_speed,
+                        "weaviate_speed": weav_speed,
+                    }
+                    writer.writerow(item)
+                    out_fh.flush()
+                    print(json.dumps(item, ensure_ascii=False, indent=2))
+                    log.info(
+                        "Compared retrieval idx=%d doc_id=%s postgres_score=%d weaviate_score=%d postgres_speed=%.6f weaviate_speed=%.6f",
+                        idx,
+                        doc_id,
+                        postgres_score,
+                        weaviate_score,
+                        pg_speed,
+                        weav_speed,
+                    )
+                    if not json_text:
+                        log.warning("Judge output has no JSON object for idx=%d: %s", idx, judge_text)
         print(
             json.dumps(
                 {
                     "dataset_file": DATASET_FILE,
                     "results_file": RESULTS_FILE,
                     "appointments_total": len(dataset_rows),
-                    "queries_total": len(results),
+                    "queries_total": queries_total,
                 },
                 ensure_ascii=False,
                 indent=2,
