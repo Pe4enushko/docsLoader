@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import csv
 import json
 import logging
 import os
+import re
+import time
 from pathlib import Path
 
 from langchain_ollama import ChatOllama
@@ -14,7 +17,7 @@ from engine.models import ChunkRecord
 from engine.weaviate import WeaviateGraphStore
 
 DATASET_FILE = os.getenv("RETRIEVAL_DATASET_FILE", "retrieval_dataset.generated.json")
-RESULTS_FILE = os.getenv("RETRIEVAL_COMPARE_RESULTS", "retrieval_compare_results.generated.json")
+RESULTS_FILE = os.getenv("RETRIEVAL_COMPARE_RESULTS", "retrieval_compare_results.generated.csv")
 LOG_FILE = "logs/compare_retrievals_weaviate_vs_postgres.log"
 
 
@@ -62,11 +65,41 @@ def to_context(chunks: list[ChunkRecord], top_n: int = 6) -> list[dict]:
     return rows
 
 
+def remove_think_blocks(text: str) -> str:
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+
+
+def extract_first_json_object(text: str) -> str | None:
+    start = text.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    for idx in range(start, len(text)):
+        char = text[idx]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start : idx + 1]
+    return None
+
+
+def clamp_percent(value: object) -> int:
+    try:
+        as_float = float(value)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(100, int(round(as_float))))
+
+
 def judge_compare(chat: ChatOllama, doc_id: str, query: str, weav_ctx: list[dict], pg_ctx: list[dict]) -> str:
     prompt = (
         "Ты судья качества retrieval-контекста для медицинского RAG.\n"
-        "Сравни два списка фрагментов и верни JSON:\n"
-        '{ "winner": "weaviate|postgres|tie", "reason": "...", "answer": "краткий ответ на запрос пользователя по лучшему контексту" }\n\n'
+        "Оцени качество каждого retrieval-контекста по релевантности запросу.\n"
+        "Верни строго JSON:\n"
+        '{ "postgres_score": 0..100, "weaviate_score": 0..100, "reason": "кратко" }\n'
+        "Где 0 - нерелевантно, 100 - максимально релевантно.\n\n"
         f"doc_id: {doc_id}\n"
         f"query: {query}\n\n"
         f"weaviate_context:\n{json.dumps(weav_ctx, ensure_ascii=False, indent=2)}\n\n"
@@ -97,46 +130,79 @@ def main() -> None:
         weav_retrieval = RetrievalService(WeaviateKnowledgeGraphAdapter(weav_store), settings)
         pg_retrieval = RetrievalService(pg_adapter, settings)
 
-        results = []
+        results: list[dict[str, object]] = []
         idx = 0
         for row in dataset_rows:
             doc_id = row["doc_id"]
-            visit_guid = row["visit_guid"]
-            mkb_codes = row["mkb_codes"]
 
-            for q_idx, query in enumerate(row["queries"], start=1):
+            for query in row["queries"]:
                 idx += 1
+
+                weav_start = time.time()
                 weav_chunks = weav_retrieval.retrieve_context(doc_id=doc_id, query=query)
+                weav_end = time.time()
+                weav_speed = round(weav_end - weav_start, 6)
+
+                pg_start = time.time()
                 pg_chunks = pg_retrieval.retrieve_context(doc_id=doc_id, query=query)
+                pg_end = time.time()
+                pg_speed = round(pg_end - pg_start, 6)
 
                 weav_ctx = to_context(weav_chunks)
                 pg_ctx = to_context(pg_chunks)
                 judge_text = judge_compare(chat, doc_id=doc_id, query=query, weav_ctx=weav_ctx, pg_ctx=pg_ctx)
+                judge_text = remove_think_blocks(judge_text)
+
+                parsed: dict[str, object] = {}
+                json_text = extract_first_json_object(judge_text)
+                if json_text:
+                    try:
+                        parsed_json = json.loads(json_text)
+                        if isinstance(parsed_json, dict):
+                            parsed = parsed_json
+                    except json.JSONDecodeError:
+                        parsed = {}
+
+                postgres_score = clamp_percent(parsed.get("postgres_score"))
+                weaviate_score = clamp_percent(parsed.get("weaviate_score"))
 
                 item = {
-                    "idx": idx,
-                    "visit_guid": visit_guid,
-                    "mkb_codes": mkb_codes,
                     "doc_id": doc_id,
-                    "query_idx": q_idx,
                     "query": query,
-                    "weaviate_chunks": len(weav_chunks),
-                    "postgres_chunks": len(pg_chunks),
-                    "judge": judge_text,
+                    "postgres_score": postgres_score,
+                    "weaviate_score": weaviate_score,
+                    "postgres_speed": pg_speed,
+                    "weaviate_speed": weav_speed,
                 }
                 results.append(item)
                 print(json.dumps(item, ensure_ascii=False, indent=2))
                 log.info(
-                    "Compared retrieval idx=%d visit_guid=%s doc_id=%s q_idx=%d weaviate=%d postgres=%d",
+                    "Compared retrieval idx=%d doc_id=%s postgres_score=%d weaviate_score=%d postgres_speed=%.6f weaviate_speed=%.6f",
                     idx,
-                    visit_guid,
                     doc_id,
-                    q_idx,
-                    len(weav_chunks),
-                    len(pg_chunks),
+                    postgres_score,
+                    weaviate_score,
+                    pg_speed,
+                    weav_speed,
                 )
+                if not json_text:
+                    log.warning("Judge output has no JSON object for idx=%d: %s", idx, judge_text)
 
-        Path(RESULTS_FILE).write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")
+        with Path(RESULTS_FILE).open("w", encoding="utf-8", newline="") as fh:
+            writer = csv.DictWriter(
+                fh,
+                fieldnames=[
+                    "doc_id",
+                    "query",
+                    "postgres_score",
+                    "weaviate_score",
+                    "postgres_speed",
+                    "weaviate_speed",
+                ],
+                delimiter="|",
+            )
+            writer.writeheader()
+            writer.writerows(results)
         print(
             json.dumps(
                 {
