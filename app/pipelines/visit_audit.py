@@ -9,6 +9,7 @@ both machine-readable and human-readable reports.
 
 import json
 from dataclasses import dataclass
+from time import perf_counter
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -73,9 +74,29 @@ class VisitAuditPipeline:
 
     def process_one(self, raw_visit: dict[str, Any], external_id: str | None = None) -> VisitAuditResult:
         """Run end-to-end audit for one raw visit payload."""
-        visit = self.visit_repo.create_raw_visit(raw_json=raw_visit, external_id=external_id)
-        preprocess = self._preprocess(raw_visit)
+        total_started = perf_counter()
+        log.info("Visit audit started | external_id=%s", external_id)
 
+        step_started = perf_counter()
+        visit = self.visit_repo.create_raw_visit(raw_json=raw_visit, external_id=external_id)
+        log.info(
+            "Visit audit step done | step=create_raw_visit | visit_id=%s | elapsed_ms=%.1f",
+            visit.id,
+            (perf_counter() - step_started) * 1000,
+        )
+
+        step_started = perf_counter()
+        preprocess = self._preprocess(raw_visit)
+        log.info(
+            "Visit audit step done | step=preprocess | visit_id=%s | flags=%s | icd10=%s | visit_type=%s | elapsed_ms=%.1f",
+            visit.id,
+            len(preprocess.flags),
+            len(preprocess.icd10_codes),
+            preprocess.classification.visit_type.value,
+            (perf_counter() - step_started) * 1000,
+        )
+
+        step_started = perf_counter()
         readable_visit = self.renderer.to_markdown(preprocess.canonical_visit)
         self.visit_repo.update_preprocessed(
             visit=visit,
@@ -91,12 +112,19 @@ class VisitAuditPipeline:
                 "classification_reasons": preprocess.classification.reasons,
             },
         )
+        log.info(
+            "Visit audit step done | step=store_preprocessed_visit | visit_id=%s | elapsed_ms=%.1f",
+            visit.id,
+            (perf_counter() - step_started) * 1000,
+        )
 
         stage_results: list[StageCheckResult] = []
         llm_trace: list[dict[str, Any]] = []
         references: list[dict[str, Any]] = []
 
         for stage in self.prompt_registry.stages():
+            stage_started = perf_counter()
+            log.info("Visit audit stage started | visit_id=%s | stage=%s", visit.id, stage.value)
             # Retrieval adapter hides storage/index internals from audit logic.
             retrieval_query = RetrievalQuery(
                 diagnosis_codes=preprocess.icd10_codes,
@@ -106,25 +134,58 @@ class VisitAuditPipeline:
                 requested_check_type=stage,
                 max_chunks=self.settings.retrieval_top_k,
             )
+            step_started = perf_counter()
             context = self.retrieval_adapter.retrieve_context(retrieval_query)
+            log.info(
+                "Visit audit stage step done | visit_id=%s | stage=%s | step=retrieve_context | refs=%s | elapsed_ms=%.1f",
+                visit.id,
+                stage.value,
+                len(context.references_metadata),
+                (perf_counter() - step_started) * 1000,
+            )
             references.extend(context.references_metadata)
 
             # Stage-specific prompt builders keep prompting logic modular.
+            step_started = perf_counter()
             builder = self.prompt_registry.get(stage)
             prompt = builder.build(
                 visit=preprocess.canonical_visit,
                 retrieval_context=context,
                 prompt_conditions=preprocess.classification.prompt_conditions,
             )
+            log.info(
+                "Visit audit stage step done | visit_id=%s | stage=%s | step=build_prompt | elapsed_ms=%.1f",
+                visit.id,
+                stage.value,
+                (perf_counter() - step_started) * 1000,
+            )
 
+            step_started = perf_counter()
             llm_resp = self.llm_client.generate(
                 system_prompt=prompt.system_prompt,
                 user_prompt=prompt.user_prompt,
                 model=self.settings.llm_model,
             )
+            log.info(
+                "Visit audit stage step done | visit_id=%s | stage=%s | step=llm_call | latency_ms=%s | elapsed_ms=%.1f",
+                visit.id,
+                stage.value,
+                llm_resp.latency_ms,
+                (perf_counter() - step_started) * 1000,
+            )
+
+            step_started = perf_counter()
             stage_result = self._parse_stage_result(stage, llm_resp.text, llm_resp.raw)
             stage_result.token_usage = llm_resp.token_usage
             stage_result.latency_ms = llm_resp.latency_ms
+            log.info(
+                "Visit audit stage step done | visit_id=%s | stage=%s | step=parse_result | status=%s | findings=%s | elapsed_ms=%.1f",
+                visit.id,
+                stage.value,
+                stage_result.status,
+                len(stage_result.findings),
+                (perf_counter() - step_started) * 1000,
+            )
 
             stage_results.append(stage_result)
             llm_trace.append(
@@ -141,6 +202,7 @@ class VisitAuditPipeline:
                     "latency_ms": llm_resp.latency_ms,
                 }
             )
+            step_started = perf_counter()
             self.audit_repo.create_llm_history(
                 visit=visit,
                 stage=stage.value,
@@ -155,7 +217,20 @@ class VisitAuditPipeline:
                 token_usage_json=llm_resp.token_usage,
                 status=stage_result.status,
             )
+            log.info(
+                "Visit audit stage step done | visit_id=%s | stage=%s | step=store_llm_history | elapsed_ms=%.1f",
+                visit.id,
+                stage.value,
+                (perf_counter() - step_started) * 1000,
+            )
+            log.info(
+                "Visit audit stage completed | visit_id=%s | stage=%s | total_stage_elapsed_ms=%.1f",
+                visit.id,
+                stage.value,
+                (perf_counter() - stage_started) * 1000,
+            )
 
+        step_started = perf_counter()
         report_payload = self.report_builder.build(
             classification=preprocess.classification,
             heuristic_flags=preprocess.flags,
@@ -163,8 +238,15 @@ class VisitAuditPipeline:
             references=references,
         )
         report_text = self.report_builder.to_text(report_payload)
+        log.info(
+            "Visit audit step done | step=build_report | visit_id=%s | human_review=%s | elapsed_ms=%.1f",
+            visit.id,
+            report_payload.human_review_required,
+            (perf_counter() - step_started) * 1000,
+        )
 
         status = ReportStatus.READY if not report_payload.human_review_required else ReportStatus.PARTIAL
+        step_started = perf_counter()
         report_row = self.audit_repo.create_report(
             visit=visit,
             report_json=report_payload.model_dump(mode="json"),
@@ -174,9 +256,28 @@ class VisitAuditPipeline:
             llm_trace_metadata={"stages": llm_trace},
             readable_visit_card=readable_visit,
         )
+        log.info(
+            "Visit audit step done | step=store_report | visit_id=%s | report_id=%s | elapsed_ms=%.1f",
+            visit.id,
+            report_row.id,
+            (perf_counter() - step_started) * 1000,
+        )
 
+        step_started = perf_counter()
         self.session.flush()
-        log.info("Visit processed | visit_id=%s | report_id=%s | status=%s", visit.id, report_row.id, status.value)
+        log.info(
+            "Visit audit step done | step=flush | visit_id=%s | report_id=%s | elapsed_ms=%.1f",
+            visit.id,
+            report_row.id,
+            (perf_counter() - step_started) * 1000,
+        )
+        log.info(
+            "Visit processed | visit_id=%s | report_id=%s | status=%s | total_elapsed_ms=%.1f",
+            visit.id,
+            report_row.id,
+            status.value,
+            (perf_counter() - total_started) * 1000,
+        )
         return VisitAuditResult(visit_id=str(visit.id), report_id=str(report_row.id), status=status.value)
 
     def _preprocess(self, raw_visit: dict[str, Any]) -> VisitPreprocessResult:

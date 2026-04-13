@@ -49,9 +49,11 @@ cp .env.example .env
 
 Set at least:
 
+- `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`
 - `OPENAI_API_KEY`
 - `OPENAI_LLM_MODEL`
 - `OPENAI_EMBEDDING_MODEL`
+- `LOG_LEVEL` (`INFO` by default, use `DEBUG` for verbose step logs)
 - optionally `OPENAI_LLM_BASE_URL` / `OPENAI_EMBEDDING_BASE_URL` for compatible gateways.
 
 2. Install dependencies:

@@ -24,6 +24,7 @@ class Settings:
 
     app_name: str = os.getenv("APP_NAME", "medical-audit-pipeline")
     app_env: str = os.getenv("APP_ENV", "dev")
+    log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
 
     database_url: str = os.getenv(
         "DATABASE_URL",
