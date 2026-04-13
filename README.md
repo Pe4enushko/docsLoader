@@ -51,11 +51,12 @@ Set at least:
 
 - `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`
 - `OPENAI_API_KEY`
-- `OPENAI_LLM_MODEL`
+- `LLM_PROVIDER` (`openai` or `ollama`)
+- `OPENAI_LLM_MODEL` (if `LLM_PROVIDER=openai`) or `OLLAMA_CHAT_MODEL` (if `LLM_PROVIDER=ollama`)
 - `OPENAI_EMBEDDING_MODEL`
 - `EMBEDDING_PROVIDER` (`openai` or `ollama`)
 - `LOG_LEVEL` (`INFO` by default, use `DEBUG` for verbose step logs)
-- optionally `OPENAI_LLM_BASE_URL` / `OPENAI_EMBEDDING_BASE_URL` for compatible gateways.
+- optionally `OPENAI_LLM_BASE_URL` / `OPENAI_EMBEDDING_BASE_URL` for compatible gateways and `OLLAMA_CHAT_BASE_URL` for Ollama.
 
 2. Install dependencies:
 
@@ -124,9 +125,10 @@ report_result = audit_visit(visit_payload, external_id="visit-123")
 
 This is an MVP-ready skeleton designed for extension:
 
+- adapter pattern is implemented for both LLM and embeddings (`Raw*Backend` + `*Adapter`),
 - retrieval and embeddings are abstracted (`RetrievalAdapter`, `EmbeddingProvider`),
 - embedding provider is selectable by env (`openai` or `ollama`, class `OllamaEmbeddings`),
-- LLM calls default to OpenAI-compatible provider (`OpenAILLMClient`),
+- LLM provider is selectable by env (`openai` or `ollama`, classes `OpenAILLMClient` / `OllamaLLMClient`),
 - rule extraction from guidelines is LLM-assisted with heuristic fallback,
 - prompts are modular and versioned by stage,
 - normalization and extraction use robust heuristics with unknown fallbacks.

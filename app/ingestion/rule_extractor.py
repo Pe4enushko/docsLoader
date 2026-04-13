@@ -14,7 +14,7 @@ from typing import Any
 from app.config import get_settings
 from app.domain.enums import RuleType
 from app.schemas.knowledge import NormalizedGuidelineDocument, RuleCandidate
-from app.services.llm_client import LLMClient, OpenAILLMClient
+from app.services.llm_client import LLMClient, create_llm_client
 from app.utils.logging import get_logger
 from app.utils.text import stable_hash
 
@@ -62,7 +62,12 @@ class GuidelineRuleExtractor:
         settings = get_settings()
         self.model = model or settings.rule_extractor_model
         self.max_fragment_chars = max_fragment_chars
-        self.llm_client = llm_client or OpenAILLMClient(default_model=self.model)
+        self.llm_client = llm_client or create_llm_client(default_model=self.model)
+        log.info(
+            "Rule extractor LLM provider initialized | provider=%s | model=%s",
+            self.llm_client.__class__.__name__,
+            self.model,
+        )
 
     def extract(self, doc: NormalizedGuidelineDocument) -> list[RuleCandidate]:
         """Extract and deduplicate rule candidates from the entire document."""

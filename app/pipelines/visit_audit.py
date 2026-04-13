@@ -25,7 +25,7 @@ from app.schemas.retrieval import RetrievalQuery
 from app.schemas.visit import VisitPreprocessResult
 from app.services.diagnosis import DiagnosisContextExtractor
 from app.services.heuristic_flags import VisitHeuristicFlagger
-from app.services.llm_client import LLMClient, OpenAILLMClient
+from app.services.llm_client import LLMClient, create_llm_client
 from app.services.renderers import VisitRenderer
 from app.services.report_builder import AuditReportBuilder
 from app.services.visit_classifier import VisitTypeClassifier
@@ -59,8 +59,12 @@ class VisitAuditPipeline:
         self.session = session
         self.settings = get_settings()
         self.retrieval_adapter = retrieval_adapter
-        self.llm_client = llm_client or OpenAILLMClient()
+        self.llm_client = llm_client or create_llm_client()
         self.prompt_registry = prompt_registry or PromptBuilderRegistry()
+        log.info(
+            "Visit audit LLM provider initialized | provider=%s",
+            self.llm_client.__class__.__name__,
+        )
 
         self.visit_repo = VisitRepository(session)
         self.audit_repo = AuditRepository(session)

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
-"""Embedding provider abstractions and OpenAI-compatible implementation."""
+"""Embedding adapter layer with pluggable backends.
+
+Pattern used in this module:
+- `RawEmbeddingBackend` defines provider-specific embedding contract.
+- Backend classes implement transport specifics (`OpenAIEmbeddingsBackend`, `OllamaEmbeddingsBackend`).
+- `EmbeddingsAdapter` exposes normalized `EmbeddingProvider` API used by pipelines.
+"""
 
 from abc import ABC, abstractmethod
 from typing import Any
@@ -19,7 +25,7 @@ log = get_logger(__name__)
 
 
 class EmbeddingProvider(ABC):
-    """Abstract interface for text embedding backends."""
+    """Target interface consumed by ingestion/retrieval pipelines."""
 
     @abstractmethod
     def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -27,12 +33,17 @@ class EmbeddingProvider(ABC):
         raise NotImplementedError
 
 
-class OpenAIEmbeddingProvider(EmbeddingProvider):
-    """OpenAI-compatible embeddings provider.
+class RawEmbeddingBackend(ABC):
+    """Provider-specific low-level embedding backend contract."""
 
-    Uses model and base URL from environment, so the same code works for
-    OpenAI cloud and self-hosted OpenAI-compatible services.
-    """
+    @abstractmethod
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """Return embeddings for input texts."""
+        raise NotImplementedError
+
+
+class OpenAIEmbeddingsBackend(RawEmbeddingBackend):
+    """Raw backend for OpenAI-compatible embeddings API."""
 
     def __init__(
         self,
@@ -58,8 +69,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             timeout=timeout_seconds or settings.embedding_timeout_seconds,
         )
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Request embeddings in batch mode with graceful dimensions fallback."""
+    def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
@@ -77,12 +87,8 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return [item.embedding for item in response.data]
 
 
-class OllamaEmbeddings(EmbeddingProvider):
-    """Ollama embeddings backend.
-
-    Supports both modern `/api/embed` batch endpoint and legacy
-    `/api/embeddings` single-input endpoint.
-    """
+class OllamaEmbeddingsBackend(RawEmbeddingBackend):
+    """Raw backend for Ollama embeddings API."""
 
     def __init__(
         self,
@@ -96,8 +102,7 @@ class OllamaEmbeddings(EmbeddingProvider):
         self.model = model or settings.ollama_embed_model
         self.timeout_seconds = timeout_seconds or settings.embedding_timeout_seconds
 
-    def embed_texts(self, texts: list[str]) -> list[list[float]]:
-        """Embed list of texts using Ollama HTTP API."""
+    def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
 
@@ -109,7 +114,6 @@ class OllamaEmbeddings(EmbeddingProvider):
         return [self._embed_single(text) for text in texts]
 
     def _try_batch_embed(self, texts: list[str]) -> list[list[float]] | None:
-        """Try `/api/embed` endpoint; return `None` when unsupported."""
         url = f"{self.base_url}/api/embed"
         payload = {"model": self.model, "input": texts}
 
@@ -124,7 +128,6 @@ class OllamaEmbeddings(EmbeddingProvider):
         if isinstance(embeddings, list) and embeddings and isinstance(embeddings[0], list):
             return embeddings
 
-        # Some servers may return single embedding shape.
         single = data.get("embedding")
         if isinstance(single, list):
             return [single]
@@ -132,7 +135,6 @@ class OllamaEmbeddings(EmbeddingProvider):
         raise RuntimeError(f"Unexpected Ollama embeddings payload: {self._preview(data)}")
 
     def _embed_single(self, text: str) -> list[float]:
-        """Embed one text using legacy `/api/embeddings` endpoint."""
         url = f"{self.base_url}/api/embeddings"
         payload = {"model": self.model, "prompt": text}
         response = requests.post(url, json=payload, timeout=self.timeout_seconds)
@@ -144,13 +146,75 @@ class OllamaEmbeddings(EmbeddingProvider):
         raise RuntimeError(f"Unexpected Ollama embedding payload: {self._preview(data)}")
 
     def _preview(self, payload: Any) -> str:
-        """Create short payload preview for logs/errors."""
         text = str(payload)
         return text[:350] + ("..." if len(text) > 350 else "")
 
 
+class EmbeddingsAdapter(EmbeddingProvider):
+    """Adapter that maps raw backend to unified `EmbeddingProvider` API."""
+
+    def __init__(self, *, backend: RawEmbeddingBackend) -> None:
+        self.backend = backend
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return self.backend.embed(texts)
+
+
+class OpenAIEmbeddingProvider(EmbeddingsAdapter):
+    """Backward-compatible OpenAI embedding provider adapter."""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        dimensions: int | None = None,
+        timeout_seconds: int | None = None,
+    ) -> None:
+        backend = OpenAIEmbeddingsBackend(
+            api_key=api_key,
+            base_url=base_url,
+            model=model,
+            dimensions=dimensions,
+            timeout_seconds=timeout_seconds,
+        )
+        super().__init__(backend=backend)
+
+
+class OllamaEmbeddings(EmbeddingsAdapter):
+    """Backward-compatible Ollama embedding provider adapter."""
+
+    def __init__(
+        self,
+        *,
+        base_url: str | None = None,
+        model: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> None:
+        backend = OllamaEmbeddingsBackend(
+            base_url=base_url,
+            model=model,
+            timeout_seconds=timeout_seconds,
+        )
+        super().__init__(backend=backend)
+
+
+def create_embedding_backend(provider_name: str | None = None) -> RawEmbeddingBackend:
+    """Factory for raw embedding backend selection from env/config."""
+    settings = get_settings()
+    name = (provider_name or settings.embedding_provider).strip().lower()
+
+    if name == "openai":
+        return OpenAIEmbeddingsBackend()
+    if name == "ollama":
+        return OllamaEmbeddingsBackend()
+
+    raise ValueError(f"Unsupported embedding provider: {name}. Expected 'openai' or 'ollama'.")
+
+
 def create_embedding_provider(provider_name: str | None = None) -> EmbeddingProvider:
-    """Factory for embedding provider selection from config/env."""
+    """Factory for adapter embedding provider selection from env/config."""
     settings = get_settings()
     name = (provider_name or settings.embedding_provider).strip().lower()
 

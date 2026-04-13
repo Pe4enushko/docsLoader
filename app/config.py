@@ -49,6 +49,9 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "openai")
     llm_model: str = os.getenv("OPENAI_LLM_MODEL", os.getenv("LLM_MODEL", "gpt-4.1-mini"))
     llm_timeout_seconds: int = int(os.getenv("LLM_TIMEOUT_SECONDS", "60"))
+    ollama_llm_base_url: str = os.getenv("OLLAMA_CHAT_BASE_URL", "http://localhost:11434")
+    ollama_llm_model: str = os.getenv("OLLAMA_CHAT_MODEL", os.getenv("LLM_MODEL", "llama3.1:8b"))
+    ollama_llm_num_ctx: int = int(os.getenv("OLLAMA_CHAT_NUM_CTX", "16384"))
 
     # Optional override for rule extraction stage; falls back to general LLM model.
     rule_extractor_model: str = os.getenv("RULE_EXTRACTOR_MODEL", os.getenv("OPENAI_LLM_MODEL", "gpt-4.1-mini"))
