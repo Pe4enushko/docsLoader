@@ -9,6 +9,8 @@ falls back to conservative heuristic extraction.
 
 import json
 import re
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
@@ -41,6 +43,46 @@ RULE_TYPE_MAP = {
     "other": RuleType.OTHER,
 }
 
+RULE_EXTRACTION_JSON_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["rules"],
+    "properties": {
+        "rules": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "topic",
+                    "rule_type",
+                    "statement",
+                    "conditions",
+                    "triggers",
+                    "audit_targets",
+                    "population",
+                    "specialty",
+                    "source_quote",
+                ],
+                "properties": {
+                    "topic": {"type": "string"},
+                    "rule_type": {
+                        "type": "string",
+                        "enum": ["diagnostic", "management", "followup", "documentation", "quality", "other"],
+                    },
+                    "statement": {"type": "string"},
+                    "conditions": {"type": "array", "items": {"type": "string"}},
+                    "triggers": {"type": "array", "items": {"type": "string"}},
+                    "audit_targets": {"type": "array", "items": {"type": "string"}},
+                    "population": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                    "specialty": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                    "source_quote": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                },
+            },
+        },
+    },
+}
+
 
 class GuidelineRuleExtractor:
     """Extract rules from normalized guideline sections.
@@ -62,11 +104,19 @@ class GuidelineRuleExtractor:
         settings = get_settings()
         self.model = model or settings.rule_extractor_model
         self.max_fragment_chars = max_fragment_chars
+        self.force_json_mode = settings.rule_extractor_force_json_mode
+        self.save_raw_responses = settings.rule_extractor_save_raw_responses
+        self.raw_dir = Path(settings.rule_extractor_raw_dir)
         self.llm_client = llm_client or create_llm_client(default_model=self.model)
+        if self.save_raw_responses:
+            self.raw_dir.mkdir(parents=True, exist_ok=True)
         log.info(
-            "Rule extractor LLM provider initialized | provider=%s | model=%s",
+            "Rule extractor initialized | provider=%s | model=%s | json_mode=%s | save_raw=%s | raw_dir=%s",
             self.llm_client.__class__.__name__,
             self.model,
+            self.force_json_mode,
+            self.save_raw_responses,
+            self.raw_dir,
         )
 
     def extract(self, doc: NormalizedGuidelineDocument) -> list[RuleCandidate]:
@@ -122,15 +172,36 @@ class GuidelineRuleExtractor:
             f"{text_fragment}"
         )
 
+        raw_record: dict[str, Any] = {
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "section_title": section_title,
+            "section_type": section_type,
+            "model": self.model,
+            "json_mode": self.force_json_mode,
+            "system_prompt": system_prompt,
+            "user_prompt": user_prompt,
+            "text_fragment_preview": text_fragment[:2000],
+            "text_fragment_hash": stable_hash(text_fragment),
+        }
+
         try:
             response = self.llm_client.generate(
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 model=self.model,
+                json_mode=self.force_json_mode,
+                response_schema=RULE_EXTRACTION_JSON_SCHEMA if self.force_json_mode else None,
             )
+            raw_record["response_text"] = response.text
+            raw_record["response_raw"] = response.raw
+            raw_record["token_usage"] = response.token_usage
+            raw_record["latency_ms"] = response.latency_ms
+
             payload = self._parse_json_payload(response.text)
             raw_rules = payload.get("rules", []) if isinstance(payload, dict) else []
             if not isinstance(raw_rules, list):
+                raw_record["parse_status"] = "invalid_payload_type"
+                self._save_raw_response(raw_record)
                 return []
 
             parsed_rules: list[RuleCandidate] = []
@@ -159,12 +230,27 @@ class GuidelineRuleExtractor:
                         metadata={
                             "extraction_method": "llm",
                             "section_type": section_type,
+                            "raw_response_saved": self.save_raw_responses,
                         },
                     )
                 )
+            raw_record["parse_status"] = "ok"
+            raw_record["rules_parsed"] = len(parsed_rules)
+            saved_path = self._save_raw_response(raw_record)
+            if saved_path:
+                log.debug("Saved raw rule extractor response | section=%s | path=%s", section_title, saved_path)
+                for candidate in parsed_rules:
+                    candidate.metadata["raw_response_path"] = saved_path
             return parsed_rules
-        except Exception:
-            log.exception("LLM-assisted rule extraction failed | section=%s", section_title)
+        except Exception as exc:
+            raw_record["parse_status"] = "error"
+            raw_record["error"] = str(exc)
+            saved_path = self._save_raw_response(raw_record)
+            log.exception(
+                "LLM-assisted rule extraction failed | section=%s | raw_path=%s",
+                section_title,
+                saved_path,
+            )
             return []
 
     def _extract_with_heuristics(self, *, section_title: str, section_type: str, text_fragment: str) -> list[RuleCandidate]:
@@ -231,24 +317,68 @@ class GuidelineRuleExtractor:
         if not raw:
             return {}
 
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
+        candidates: list[str] = [raw]
 
         fenced_match = re.search(r"```json\s*(.*?)\s*```", raw, flags=re.DOTALL | re.IGNORECASE)
         if fenced_match:
+            candidates.append(fenced_match.group(1).strip())
+
+        candidates.extend(self._iter_json_object_candidates(raw))
+        seen: set[str] = set()
+        unique_candidates: list[str] = []
+        for candidate in candidates:
+            trimmed = candidate.strip()
+            if not trimmed or trimmed in seen:
+                continue
+            seen.add(trimmed)
+            unique_candidates.append(trimmed)
+
+        last_error: Exception | None = None
+        for candidate in unique_candidates:
             try:
-                return json.loads(fenced_match.group(1))
-            except json.JSONDecodeError:
-                pass
+                return json.loads(candidate)
+            except json.JSONDecodeError as exc:
+                last_error = exc
 
-        first = raw.find("{")
-        last = raw.rfind("}")
-        if first != -1 and last != -1 and last > first:
-            return json.loads(raw[first : last + 1])
+        raise ValueError(f"Cannot parse JSON from LLM output: {last_error}")
 
-        raise ValueError("Cannot parse JSON from LLM output")
+    def _iter_json_object_candidates(self, raw: str) -> list[str]:
+        """Extract balanced top-level JSON object substrings from noisy text."""
+        candidates: list[str] = []
+        depth = 0
+        start = -1
+
+        for idx, ch in enumerate(raw):
+            if ch == "{":
+                if depth == 0:
+                    start = idx
+                depth += 1
+            elif ch == "}":
+                if depth == 0:
+                    continue
+                depth -= 1
+                if depth == 0 and start != -1:
+                    candidates.append(raw[start : idx + 1])
+                    start = -1
+
+        # Try bigger candidate first; often contains full payload.
+        candidates.sort(key=len, reverse=True)
+        return candidates
+
+    def _save_raw_response(self, record: dict[str, Any]) -> str | None:
+        """Persist raw LLM exchange for post-mortem debugging and reproducibility."""
+        if not self.save_raw_responses:
+            return None
+
+        try:
+            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%f")
+            file_hash = stable_hash(f"{record.get('section_title', '')}:{record.get('text_fragment_hash', '')}")[:12]
+            output_path = self.raw_dir / f"{timestamp}_{file_hash}.json"
+            output_path.write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            return str(output_path)
+        except Exception:
+            log.exception("Failed to save raw rule extractor response")
+            return None
 
     def _infer_rule_type(self, section_type: str, text: str) -> RuleType:
         """Infer semantic rule type from section context and sentence wording."""

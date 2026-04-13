@@ -169,6 +169,7 @@ class VisitAuditPipeline:
                 system_prompt=prompt.system_prompt,
                 user_prompt=prompt.user_prompt,
                 model=self.settings.llm_model,
+                json_mode=True,
             )
             log.info(
                 "Visit audit stage step done | visit_id=%s | stage=%s | step=llm_call | latency_ms=%s | elapsed_ms=%.1f",

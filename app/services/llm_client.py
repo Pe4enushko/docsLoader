@@ -30,7 +30,15 @@ class LLMClient(ABC):
     """Target interface consumed by pipelines and services."""
 
     @abstractmethod
-    def generate(self, *, system_prompt: str, user_prompt: str, model: str | None = None) -> LLMResponse:
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        json_mode: bool = False,
+        response_schema: dict[str, Any] | None = None,
+    ) -> LLMResponse:
         """Generate text for `(system, user)` prompt pair."""
         raise NotImplementedError
 
@@ -45,6 +53,8 @@ class RawLLMBackend(ABC):
         system_prompt: str,
         user_prompt: str,
         model: str | None = None,
+        json_mode: bool = False,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any], dict[str, int], int]:
         """Return `(text, raw_payload, token_usage, latency_ms)` from provider."""
         raise NotImplementedError
@@ -78,16 +88,46 @@ class OpenAIChatBackend(RawLLMBackend):
         system_prompt: str,
         user_prompt: str,
         model: str | None = None,
+        json_mode: bool = False,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any], dict[str, int], int]:
         started = time.perf_counter()
-        response = self.client.chat.completions.create(
-            model=model or self.default_model,
-            temperature=0,
-            messages=[
+        request_payload: dict[str, Any] = {
+            "model": model or self.default_model,
+            "temperature": 0,
+            "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
-        )
+        }
+
+        json_mode_variant = "off"
+        if json_mode:
+            if response_schema:
+                request_payload["response_format"] = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "structured_output",
+                        "schema": response_schema,
+                        "strict": True,
+                    },
+                }
+                json_mode_variant = "json_schema"
+            else:
+                request_payload["response_format"] = {"type": "json_object"}
+                json_mode_variant = "json_object"
+
+        try:
+            response = self.client.chat.completions.create(**request_payload)
+        except Exception:
+            # Not every OpenAI-compatible server supports json_schema response format.
+            if json_mode and response_schema:
+                fallback_payload = dict(request_payload)
+                fallback_payload["response_format"] = {"type": "json_object"}
+                response = self.client.chat.completions.create(**fallback_payload)
+                json_mode_variant = "json_object_fallback"
+            else:
+                raise
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         message = response.choices[0].message.content if response.choices else ""
@@ -105,6 +145,8 @@ class OpenAIChatBackend(RawLLMBackend):
             raw_payload = response.model_dump()  # type: ignore[assignment]
         else:  # pragma: no cover
             raw_payload = json.loads(json.dumps(response, default=str))
+        raw_payload.setdefault("_adapter_meta", {})
+        raw_payload["_adapter_meta"]["json_mode"] = json_mode_variant
 
         return text, raw_payload, token_usage, latency_ms
 
@@ -132,6 +174,8 @@ class OllamaChatBackend(RawLLMBackend):
         system_prompt: str,
         user_prompt: str,
         model: str | None = None,
+        json_mode: bool = False,
+        response_schema: dict[str, Any] | None = None,
     ) -> tuple[str, dict[str, Any], dict[str, int], int]:
         payload: dict[str, Any] = {
             "model": model or self.default_model,
@@ -143,11 +187,28 @@ class OllamaChatBackend(RawLLMBackend):
         }
         if self.num_ctx > 0:
             payload["options"] = {"num_ctx": self.num_ctx}
+        if json_mode:
+            payload["format"] = response_schema or "json"
 
         started = time.perf_counter()
-        response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout_seconds)
-        response.raise_for_status()
-        raw_payload = response.json()
+        json_mode_variant = "off"
+        if json_mode:
+            json_mode_variant = "json_schema" if response_schema else "json"
+        try:
+            response = requests.post(f"{self.base_url}/api/chat", json=payload, timeout=self.timeout_seconds)
+            response.raise_for_status()
+            raw_payload = response.json()
+        except requests.HTTPError:
+            # Older Ollama versions may reject json schema in `format`.
+            if json_mode and response_schema:
+                fallback_payload = dict(payload)
+                fallback_payload["format"] = "json"
+                response = requests.post(f"{self.base_url}/api/chat", json=fallback_payload, timeout=self.timeout_seconds)
+                response.raise_for_status()
+                raw_payload = response.json()
+                json_mode_variant = "json_fallback"
+            else:
+                raise
         latency_ms = int((time.perf_counter() - started) * 1000)
 
         text = str((raw_payload.get("message") or {}).get("content", "") or "")
@@ -158,6 +219,8 @@ class OllamaChatBackend(RawLLMBackend):
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         }
+        raw_payload.setdefault("_adapter_meta", {})
+        raw_payload["_adapter_meta"]["json_mode"] = json_mode_variant
         return text, raw_payload, token_usage, latency_ms
 
 
@@ -168,11 +231,21 @@ class LLMAdapter(LLMClient):
         self.backend = backend
         self.default_model = default_model
 
-    def generate(self, *, system_prompt: str, user_prompt: str, model: str | None = None) -> LLMResponse:
+    def generate(
+        self,
+        *,
+        system_prompt: str,
+        user_prompt: str,
+        model: str | None = None,
+        json_mode: bool = False,
+        response_schema: dict[str, Any] | None = None,
+    ) -> LLMResponse:
         text, raw, token_usage, latency_ms = self.backend.invoke(
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             model=model or self.default_model,
+            json_mode=json_mode,
+            response_schema=response_schema,
         )
         return LLMResponse(
             text=text,

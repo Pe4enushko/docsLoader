@@ -55,6 +55,9 @@ class Settings:
 
     # Optional override for rule extraction stage; falls back to general LLM model.
     rule_extractor_model: str = os.getenv("RULE_EXTRACTOR_MODEL", os.getenv("OPENAI_LLM_MODEL", "gpt-4.1-mini"))
+    rule_extractor_force_json_mode: bool = os.getenv("RULE_EXTRACTOR_FORCE_JSON_MODE", "true").lower() == "true"
+    rule_extractor_save_raw_responses: bool = os.getenv("RULE_EXTRACTOR_SAVE_RAW_RESPONSES", "true").lower() == "true"
+    rule_extractor_raw_dir: str = os.getenv("RULE_EXTRACTOR_RAW_DIR", "tmp/rule_extractor_raw")
 
     retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "8"))
 
