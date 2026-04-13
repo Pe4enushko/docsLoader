@@ -53,6 +53,7 @@ Set at least:
 - `OPENAI_API_KEY`
 - `OPENAI_LLM_MODEL`
 - `OPENAI_EMBEDDING_MODEL`
+- `EMBEDDING_PROVIDER` (`openai` or `ollama`)
 - `LOG_LEVEL` (`INFO` by default, use `DEBUG` for verbose step logs)
 - optionally `OPENAI_LLM_BASE_URL` / `OPENAI_EMBEDDING_BASE_URL` for compatible gateways.
 
@@ -124,7 +125,8 @@ report_result = audit_visit(visit_payload, external_id="visit-123")
 This is an MVP-ready skeleton designed for extension:
 
 - retrieval and embeddings are abstracted (`RetrievalAdapter`, `EmbeddingProvider`),
-- LLM calls and embeddings default to OpenAI-compatible providers (`OpenAILLMClient`, `OpenAIEmbeddingProvider`),
+- embedding provider is selectable by env (`openai` or `ollama`, class `OllamaEmbeddings`),
+- LLM calls default to OpenAI-compatible provider (`OpenAILLMClient`),
 - rule extraction from guidelines is LLM-assisted with heuristic fallback,
 - prompts are modular and versioned by stage,
 - normalization and extraction use robust heuristics with unknown fallbacks.

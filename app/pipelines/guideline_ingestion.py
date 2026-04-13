@@ -24,7 +24,7 @@ from app.ingestion import (
     TikaClient,
 )
 from app.repositories.guideline_repository import GuidelineRepository
-from app.services.embedding import EmbeddingProvider, OpenAIEmbeddingProvider
+from app.services.embedding import EmbeddingProvider, create_embedding_provider
 from app.utils.logging import get_logger
 
 
@@ -61,8 +61,9 @@ class GuidelineIngestionPipeline:
         self.normalizer = normalizer or GuidelineSectionNormalizer()
         self.chunker = chunker or GuidelineChunker()
         self.rule_extractor = rule_extractor or GuidelineRuleExtractor()
-        self.embedding_provider = embedding_provider or OpenAIEmbeddingProvider()
+        self.embedding_provider = embedding_provider or create_embedding_provider()
         self.repo = GuidelineRepository(session)
+        log.info("Guideline ingestion embedding provider initialized | provider=%s", self.embedding_provider.__class__.__name__)
 
     def ingest_file(self, source_file: str | Path) -> IngestionResult:
         """Run complete ingestion flow for a single guideline file."""
