@@ -4,15 +4,30 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "docs-loader"
-version = "0.2.0"
-description = "Internal pipeline for validating Russian clinic appointment data (PostgreSQL-backed)"
+version = "0.3.0"
+description = "Medical document intelligence and visit audit pipeline (PostgreSQL + RAG + staged LLM checks)"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 dependencies = [
   "python-dotenv>=1.0.1",
   "pydantic>=2.8.0",
-  "psycopg[binary]>=3.0",
+  "psycopg[binary]>=3.1",
+  "SQLAlchemy>=2.0.30",
+  "alembic>=1.13.2",
+  "pgvector>=0.3.2",
+  "requests>=2.32.0",
+  "openai>=1.45.0",
 ]
 
-[tool.setuptools]
-packages = ["engine"]
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.2.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*", "engine*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

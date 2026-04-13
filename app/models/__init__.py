@@ -1,21 +1,14 @@
-from __future__ import annotations
-
-"""Backward-compatible exports for the new SQLAlchemy schema."""
-
-from app.models import (
-    AuditReport,
-    Base,
+from app.models.base import Base
+from app.models.knowledge import (
     GuidelineChunk,
     GuidelineDocument,
     GuidelineRule,
     GuidelineSection,
-    LLMCheckHistory,
     NormativeDocument,
     NormativeRule,
     NormativeSection,
-    ProcessingJob,
-    VisitRecord,
 )
+from app.models.visit import AuditReport, LLMCheckHistory, ProcessingJob, VisitRecord
 
 __all__ = [
     "Base",

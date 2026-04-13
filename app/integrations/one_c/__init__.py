@@ -1,10 +1,6 @@
-from __future__ import annotations
+"""1C integration layer for appointment retrieval and payload normalization."""
 
-"""Legacy compatibility exports for appointment payload utilities.
-
-The implementation was moved to `app.integrations.one_c.parser`.
-"""
-
+from app.integrations.one_c.client import OneCClient
 from app.integrations.one_c.parser import (
     extract_visit_date_raw,
     extract_visit_dict,
@@ -13,6 +9,7 @@ from app.integrations.one_c.parser import (
 )
 
 __all__ = [
+    "OneCClient",
     "parse_appointments_payload",
     "extract_visit_dict",
     "extract_visit_guid",
