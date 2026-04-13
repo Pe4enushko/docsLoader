@@ -9,6 +9,7 @@ modules can depend on explicit configuration instead of ad-hoc `os.getenv` calls
 import os
 from dataclasses import dataclass
 from functools import lru_cache
+from urllib.parse import quote_plus
 
 try:
     from dotenv import load_dotenv
@@ -25,10 +26,15 @@ class Settings:
     app_name: str = os.getenv("APP_NAME", "medical-audit-pipeline")
     app_env: str = os.getenv("APP_ENV", "dev")
 
-    database_url: str = os.getenv(
-        "DATABASE_URL",
-        "postgresql+psycopg://postgres:postgres@localhost:5432/med_audit",
-    )
+    # Keep optional full URL override for backwards compatibility.
+    database_url: str = os.getenv("DATABASE_URL", "")
+    database_driver: str = os.getenv("DATABASE_DRIVER", "postgresql+psycopg")
+    database_host: str = os.getenv("DATABASE_HOST", "localhost")
+    database_port: str = os.getenv("DATABASE_PORT", "5432")
+    database_user: str = os.getenv("DATABASE_USER", "postgres")
+    database_password: str = os.getenv("DATABASE_PASSWORD", "postgres")
+    database_name: str = os.getenv("DATABASE_NAME", "med_audit")
+    database_sslmode: str = os.getenv("DATABASE_SSLMODE", "prefer")
     db_echo: bool = os.getenv("DB_ECHO", "false").lower() == "true"
 
     tika_url: str = os.getenv("TIKA_URL", "http://localhost:9998")
@@ -66,6 +72,20 @@ class Settings:
     test_data_input_path: str = os.getenv("TEST_DATA_INPUT_PATH", "tmp/test_visits_input.json")
     test_data_output_path: str = os.getenv("TEST_DATA_OUTPUT_PATH", "tmp/test_visits_output.json")
     test_data_continue_on_error: bool = os.getenv("TEST_DATA_CONTINUE_ON_ERROR", "true").lower() == "true"
+
+    def build_database_url(self) -> str:
+        """Build SQLAlchemy URL with URL-encoded password."""
+        if self.database_url.strip():
+            return self.database_url.strip()
+
+        driver = self.database_driver.strip() or "postgresql+psycopg"
+        user = quote_plus(self.database_user.strip())
+        password = quote_plus(self.database_password)
+        host = self.database_host.strip()
+        port = self.database_port.strip()
+        db_name = self.database_name.strip()
+        sslmode = self.database_sslmode.strip() or "prefer"
+        return f"{driver}://{user}:{password}@{host}:{port}/{db_name}?sslmode={sslmode}"
 
 
 @lru_cache(maxsize=1)
