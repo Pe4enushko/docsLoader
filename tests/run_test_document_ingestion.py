@@ -77,6 +77,8 @@ class TestDocumentIngestionRunner:
         self.chunker = GuidelineChunker()
         self.rule_extractor = GuidelineRuleExtractor()
         self.embedding_provider = create_embedding_provider()
+        self._active_document_name: str | None = None
+        self._active_document_path: str | None = None
         log.info(
             "Test ingestion runner initialized | embedding_provider=%s | rule_extractor=%s",
             self.embedding_provider.__class__.__name__,
@@ -86,11 +88,18 @@ class TestDocumentIngestionRunner:
     def run(self, source_path: str) -> TestIngestionRunResult:
         """Run full ingestion for one source file with detailed step statuses."""
         source_file = _resolve_path(source_path)
+        document_name = source_file.name
         steps: list[StepRun] = []
         started = perf_counter()
         document_id: str | None = None
 
         if not source_file.exists() or not source_file.is_file():
+            log.error(
+                "Test ingestion source validation failed | document_name=%s | document_path=%s | error=%s",
+                document_name,
+                source_file,
+                "File not found",
+            )
             return TestIngestionRunResult(
                 source_path=str(source_file),
                 status="error",
@@ -102,8 +111,14 @@ class TestDocumentIngestionRunner:
 
         session = SessionLocal()
         repo = GuidelineRepository(session)
+        self._active_document_name = document_name
+        self._active_document_path = str(source_file)
 
-        log.info("Test ingestion started | file=%s", source_file)
+        log.info(
+            "Test ingestion started | document_name=%s | document_path=%s",
+            document_name,
+            source_file,
+        )
         try:
             extracted_text = self._run_step(
                 steps=steps,
@@ -193,7 +208,8 @@ class TestDocumentIngestionRunner:
                 steps=steps,
             )
             log.info(
-                "Test ingestion completed | file=%s | document_id=%s | chunks=%s | rules=%s | elapsed_ms=%.1f",
+                "Test ingestion completed | document_name=%s | document_path=%s | document_id=%s | chunks=%s | rules=%s | elapsed_ms=%.1f",
+                document_name,
                 source_file,
                 document_id,
                 len(stored_chunks),
@@ -234,9 +250,16 @@ class TestDocumentIngestionRunner:
                 steps=steps,
                 error=str(exc),
             )
-            log.exception("Test ingestion failed | file=%s | error=%s", source_file, exc)
+            log.exception(
+                "Test ingestion failed | document_name=%s | document_path=%s | error=%s",
+                document_name,
+                source_file,
+                exc,
+            )
             return result
         finally:
+            self._active_document_name = None
+            self._active_document_path = None
             session.close()
 
     def _run_step(
@@ -249,14 +272,26 @@ class TestDocumentIngestionRunner:
     ) -> Any:
         """Execute one step with timing, structured logs and failure capture."""
         started = perf_counter()
-        log.info("Test ingestion step started | step=%s", step_name)
+        log.info(
+            "Test ingestion step started | step=%s | document_name=%s | document_path=%s",
+            step_name,
+            self._active_document_name,
+            self._active_document_path,
+        )
         try:
             payload = fn()
         except Exception as exc:
             elapsed_ms = round((perf_counter() - started) * 1000, 1)
             step = StepRun(step=step_name, status="error", elapsed_ms=elapsed_ms, error=str(exc))
             self._record_step(steps, step)
-            log.exception("Test ingestion step failed | step=%s | elapsed_ms=%.1f", step_name, elapsed_ms)
+            log.exception(
+                "Test ingestion step failed | step=%s | document_name=%s | document_path=%s | elapsed_ms=%.1f | error=%s",
+                step_name,
+                self._active_document_name,
+                self._active_document_path,
+                elapsed_ms,
+                exc,
+            )
             raise
 
         elapsed_ms = round((perf_counter() - started) * 1000, 1)
@@ -264,8 +299,10 @@ class TestDocumentIngestionRunner:
         step = StepRun(step=step_name, status="ok", elapsed_ms=elapsed_ms, details=details)
         self._record_step(steps, step)
         log.info(
-            "Test ingestion step done | step=%s | elapsed_ms=%.1f | details=%s",
+            "Test ingestion step done | step=%s | document_name=%s | document_path=%s | elapsed_ms=%.1f | details=%s",
             step_name,
+            self._active_document_name,
+            self._active_document_path,
             elapsed_ms,
             details,
         )
@@ -275,7 +312,13 @@ class TestDocumentIngestionRunner:
         """Record skipped step (e.g. embedding when no chunks exist)."""
         step = StepRun(step=step_name, status="skipped", elapsed_ms=0.0, details=details)
         self._record_step(steps, step)
-        log.info("Test ingestion step skipped | step=%s | details=%s", step_name, details)
+        log.info(
+            "Test ingestion step skipped | step=%s | document_name=%s | document_path=%s | details=%s",
+            step_name,
+            self._active_document_name,
+            self._active_document_path,
+            details,
+        )
 
     def _record_step(self, steps: list[StepRun], step: StepRun) -> None:
         steps.append(step)
@@ -397,17 +440,28 @@ def main() -> int:
     results: list[TestIngestionRunResult] = []
     for index, source_path in enumerate(selected_sources, start=1):
         log.info(
-            "Test ingestion batch item started | index=%s/%s | source=%s",
+            "Test ingestion selected document | index=%s/%s | document_name=%s | document_path=%s",
             index,
             len(selected_sources),
+            source_path.name,
+            source_path,
+        )
+
+    for index, source_path in enumerate(selected_sources, start=1):
+        log.info(
+            "Test ingestion batch item started | index=%s/%s | document_name=%s | document_path=%s",
+            index,
+            len(selected_sources),
+            source_path.name,
             source_path,
         )
         result = runner.run(source_path=str(source_path))
         results.append(result)
         log.info(
-            "Test ingestion batch item finished | index=%s/%s | source=%s | status=%s | document_id=%s",
+            "Test ingestion batch item finished | index=%s/%s | document_name=%s | document_path=%s | status=%s | document_id=%s",
             index,
             len(selected_sources),
+            source_path.name,
             source_path,
             result.status,
             result.document_id,

@@ -99,13 +99,13 @@ Uses env vars: `GUIDELINES_DIR`, `GUIDELINES_GLOB`, `GUIDELINES_RECURSIVE`, `ING
 Run test ingestion with detailed step-by-step logging and structured error report:
 
 ```bash
-python3 scripts/run_test_document_ingestion.py --source docs/example.pdf
+python3 tests/run_test_document_ingestion.py --source docs/example.pdf
 ```
 
 Random batch mode from main ingestion folder/pattern:
 
 ```bash
-python3 scripts/run_test_document_ingestion.py --docs-count 5 --random-seed 42
+python3 tests/run_test_document_ingestion.py --docs-count 5 --random-seed 42
 ```
 
 Uses args/env:
@@ -122,7 +122,7 @@ In random batch mode file selection uses the same source settings as main ingest
 Run audit pipeline on test data file and export batch results to JSON:
 
 ```bash
-python3 scripts/run_test_data_audit.py
+python3 tests/run_test_data_audit.py
 ```
 
 Uses env vars: `TEST_DATA_INPUT_PATH`, `TEST_DATA_OUTPUT_PATH`, `TEST_DATA_CONTINUE_ON_ERROR`.

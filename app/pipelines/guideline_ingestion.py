@@ -11,8 +11,10 @@ Pipeline responsibilities:
 """
 
 from dataclasses import dataclass
+from collections.abc import Callable
 from pathlib import Path
 from time import perf_counter
+from typing import Any, TypeVar
 from uuid import UUID
 
 from sqlalchemy.orm import Session
@@ -30,6 +32,7 @@ from app.utils.logging import get_pipeline_logger
 
 
 log = get_pipeline_logger(__name__, "guideline_ingestion_pipeline.log")
+_T = TypeVar("_T")
 
 
 @dataclass(slots=True)
@@ -72,106 +75,94 @@ class GuidelineIngestionPipeline:
         total_started = perf_counter()
         log.info("Guideline ingestion started | file=%s", source_path)
 
-        step_started = perf_counter()
-        extracted_text = self.tika_client.parse_to_text(source_path)
-        log.info(
-            "Guideline ingestion step done | step=parse_tika | file=%s | chars=%s | elapsed_ms=%.1f",
-            source_path,
-            len(extracted_text),
-            (perf_counter() - step_started) * 1000,
-        )
-
-        step_started = perf_counter()
-        clean_text = self.cleaner.clean(extracted_text)
-        log.info(
-            "Guideline ingestion step done | step=clean_text | file=%s | chars=%s | elapsed_ms=%.1f",
-            source_path,
-            len(clean_text),
-            (perf_counter() - step_started) * 1000,
-        )
-
-        step_started = perf_counter()
-        normalized_doc = self.normalizer.normalize(source_path=source_path, extracted_text=clean_text)
-        log.info(
-            "Guideline ingestion step done | step=normalize_sections | file=%s | sections_top=%s | elapsed_ms=%.1f",
-            source_path,
-            len(normalized_doc.sections),
-            (perf_counter() - step_started) * 1000,
-        )
-
-        # Step 1: persist normalized document + section hierarchy.
-        step_started = perf_counter()
-        document = self.repo.upsert_document(normalized_doc)
-        self.session.flush()
-        log.info(
-            "Guideline ingestion step done | step=store_document_sections | file=%s | doc_id=%s | sections_total=%s | elapsed_ms=%.1f",
-            source_path,
-            document.id,
-            len(document.sections),
-            (perf_counter() - step_started) * 1000,
-        )
-
-        # Step 2: build chunks and enrich them with embeddings for RAG retrieval.
-        step_started = perf_counter()
-        chunks = self.chunker.chunk_document(normalized_doc)
-        log.info(
-            "Guideline ingestion step done | step=chunking | file=%s | chunks=%s | elapsed_ms=%.1f",
-            source_path,
-            len(chunks),
-            (perf_counter() - step_started) * 1000,
-        )
-
-        if chunks:
-            step_started = perf_counter()
-            embeddings = self.embedding_provider.embed_texts([chunk.chunk_text for chunk in chunks])
-            for idx, embedding in enumerate(embeddings):
-                chunks[idx].embedding = embedding
-            log.info(
-                "Guideline ingestion step done | step=embeddings | file=%s | chunks=%s | vector_dim=%s | elapsed_ms=%.1f",
-                source_path,
-                len(chunks),
-                len(embeddings[0]) if embeddings else 0,
-                (perf_counter() - step_started) * 1000,
+        try:
+            extracted_text = self._run_stage(
+                stage="parse_tika",
+                source_path=source_path,
+                fn=lambda: self.tika_client.parse_to_text(source_path),
+                details_fn=lambda payload: {"chars": len(payload)},
+            )
+            clean_text = self._run_stage(
+                stage="clean_text",
+                source_path=source_path,
+                fn=lambda: self.cleaner.clean(extracted_text),
+                details_fn=lambda payload: {"chars": len(payload)},
+            )
+            normalized_doc = self._run_stage(
+                stage="normalize_sections",
+                source_path=source_path,
+                fn=lambda: self.normalizer.normalize(source_path=source_path, extracted_text=clean_text),
+                details_fn=lambda payload: {"sections_top": len(payload.sections)},
             )
 
-        step_started = perf_counter()
-        chunk_rows = self.repo.add_chunks(document, chunks)
-        log.info(
-            "Guideline ingestion step done | step=store_chunks | file=%s | doc_id=%s | chunks=%s | elapsed_ms=%.1f",
-            source_path,
-            document.id,
-            len(chunk_rows),
-            (perf_counter() - step_started) * 1000,
-        )
+            # Step 1: persist normalized document + section hierarchy.
+            document = self._run_stage(
+                stage="store_document_sections",
+                source_path=source_path,
+                fn=lambda: self.repo.upsert_document(normalized_doc),
+                details_fn=lambda payload: {"doc_id": str(payload.id), "sections_total": len(payload.sections)},
+            )
+            self._run_stage(
+                stage="flush_after_document",
+                source_path=source_path,
+                fn=self.session.flush,
+                details_fn=lambda _payload: {"doc_id": str(document.id)},
+            )
 
-        # Step 3: extract structured recommendation rules.
-        step_started = perf_counter()
-        rules = self.rule_extractor.extract(normalized_doc)
-        log.info(
-            "Guideline ingestion step done | step=extract_rules | file=%s | rules=%s | elapsed_ms=%.1f",
-            source_path,
-            len(rules),
-            (perf_counter() - step_started) * 1000,
-        )
+            # Step 2: build chunks and enrich them with embeddings for RAG retrieval.
+            chunks = self._run_stage(
+                stage="chunking",
+                source_path=source_path,
+                fn=lambda: self.chunker.chunk_document(normalized_doc),
+                details_fn=lambda payload: {"chunks": len(payload)},
+            )
 
-        step_started = perf_counter()
-        rule_rows = self.repo.add_rules(document, rules)
-        log.info(
-            "Guideline ingestion step done | step=store_rules | file=%s | doc_id=%s | rules=%s | elapsed_ms=%.1f",
-            source_path,
-            document.id,
-            len(rule_rows),
-            (perf_counter() - step_started) * 1000,
-        )
+            if chunks:
+                embeddings = self._run_stage(
+                    stage="embeddings",
+                    source_path=source_path,
+                    fn=lambda: self.embedding_provider.embed_texts([chunk.chunk_text for chunk in chunks]),
+                    details_fn=lambda payload: {
+                        "chunks": len(payload),
+                        "vector_dim": len(payload[0]) if payload else 0,
+                    },
+                )
+                for idx, embedding in enumerate(embeddings):
+                    chunks[idx].embedding = embedding
+            else:
+                log.info("Guideline ingestion step skipped | step=embeddings | file=%s | reason=no_chunks", source_path)
 
-        step_started = perf_counter()
-        self.session.flush()
-        log.info(
-            "Guideline ingestion step done | step=flush | file=%s | doc_id=%s | elapsed_ms=%.1f",
-            source_path,
-            document.id,
-            (perf_counter() - step_started) * 1000,
-        )
+            chunk_rows = self._run_stage(
+                stage="store_chunks",
+                source_path=source_path,
+                fn=lambda: self.repo.add_chunks(document, chunks),
+                details_fn=lambda payload: {"doc_id": str(document.id), "chunks": len(payload)},
+            )
+
+            # Step 3: extract structured recommendation rules.
+            rules = self._run_stage(
+                stage="extract_rules",
+                source_path=source_path,
+                fn=lambda: self.rule_extractor.extract(normalized_doc),
+                details_fn=lambda payload: {"rules": len(payload)},
+            )
+            rule_rows = self._run_stage(
+                stage="store_rules",
+                source_path=source_path,
+                fn=lambda: self.repo.add_rules(document, rules),
+                details_fn=lambda payload: {"doc_id": str(document.id), "rules": len(payload)},
+            )
+
+            self._run_stage(
+                stage="flush",
+                source_path=source_path,
+                fn=self.session.flush,
+                details_fn=lambda _payload: {"doc_id": str(document.id)},
+            )
+        except Exception as exc:
+            log.exception("Guideline ingestion failed | file=%s | error=%s", source_path, exc)
+            raise
+
         log.info(
             "Guideline ingestion completed | file=%s | doc_id=%s | sections=%s | chunks=%s | rules=%s | elapsed_ms=%.1f",
             source_path,
@@ -188,3 +179,38 @@ class GuidelineIngestionPipeline:
             chunks_count=len(chunk_rows),
             rules_count=len(rule_rows),
         )
+
+    def _run_stage(
+        self,
+        *,
+        stage: str,
+        source_path: str,
+        fn: Callable[[], _T],
+        details_fn: Callable[[_T], dict[str, Any]] | None = None,
+    ) -> _T:
+        """Execute ingestion stage with consistent start/done/failed logging."""
+        started = perf_counter()
+        log.info("Guideline ingestion step started | step=%s | file=%s", stage, source_path)
+        try:
+            payload = fn()
+        except Exception as exc:
+            elapsed_ms = (perf_counter() - started) * 1000
+            log.exception(
+                "Guideline ingestion step failed | step=%s | file=%s | elapsed_ms=%.1f | error=%s",
+                stage,
+                source_path,
+                elapsed_ms,
+                exc,
+            )
+            raise
+
+        elapsed_ms = (perf_counter() - started) * 1000
+        details = details_fn(payload) if details_fn else {}
+        log.info(
+            "Guideline ingestion step done | step=%s | file=%s | elapsed_ms=%.1f | details=%s",
+            stage,
+            source_path,
+            elapsed_ms,
+            details,
+        )
+        return payload
