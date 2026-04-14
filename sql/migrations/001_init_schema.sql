@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS guideline_documents (
     metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),
-    CONSTRAINT ck_guideline_documents_status CHECK (status IN ('draft', 'active', 'archived'))
+    CONSTRAINT ck_guideline_documents_status CHECK (LOWER(status) IN ('draft', 'active', 'archived'))
 );
 
 CREATE TABLE IF NOT EXISTS guideline_sections (
