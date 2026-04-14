@@ -3,16 +3,14 @@ from __future__ import annotations
 """SQL migration runner for PostgreSQL.
 
 This module replaces Alembic for this project. It applies plain SQL files from
-`sql/migrations` in lexical order and stores migration history in
-`schema_migrations`.
+`sql/migrations` in lexical order on every run.
 """
 
 import argparse
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
 from app.config import get_settings
@@ -30,62 +28,29 @@ class MigrationFile:
 
     version: str
     path: Path
-    checksum: str
     sql: str
 
 
 class SQLMigrator:
-    """Applies SQL migrations and tracks applied versions in DB."""
+    """Applies SQL migration scripts in lexical order."""
 
     def __init__(self, engine: Engine, migrations_dir: Path = DEFAULT_MIGRATIONS_DIR) -> None:
         self.engine = engine
         self.migrations_dir = migrations_dir
 
     def run(self) -> list[str]:
-        """Apply all pending migrations and return list of applied versions."""
-        self._ensure_migrations_table()
+        """Apply all migration scripts and return executed file versions."""
         migrations = self._load_migrations()
-        applied = self._load_applied_map()
-
-        applied_now: list[str] = []
+        executed: list[str] = []
         for migration in migrations:
-            prev_checksum = applied.get(migration.version)
-            if prev_checksum:
-                if prev_checksum != migration.checksum:
-                    raise RuntimeError(
-                        "Migration checksum mismatch for "
-                        f"{migration.version}: db={prev_checksum} file={migration.checksum}"
-                    )
-                log.info("Migration already applied | version=%s", migration.version)
-                continue
-
             self._apply_migration(migration)
-            applied_now.append(migration.version)
+            executed.append(migration.version)
 
-        log.info("Migration run completed | applied=%s", len(applied_now))
-        return applied_now
-
-    def _ensure_migrations_table(self) -> None:
-        """Create migration history table if it does not exist."""
-        ddl = """
-        CREATE TABLE IF NOT EXISTS schema_migrations (
-            version text PRIMARY KEY,
-            checksum text NOT NULL,
-            applied_at timestamptz NOT NULL DEFAULT now()
-        )
-        """
-        with self.engine.begin() as conn:
-            conn.execute(text(ddl))
-
-    def _load_applied_map(self) -> dict[str, str]:
-        """Return {version: checksum} map of applied migrations."""
-        query = text("SELECT version, checksum FROM schema_migrations")
-        with self.engine.connect() as conn:
-            rows = conn.execute(query).all()
-        return {str(row[0]): str(row[1]) for row in rows}
+        log.info("Migration run completed | executed=%s", len(executed))
+        return executed
 
     def _load_migrations(self) -> list[MigrationFile]:
-        """Read migration files from disk and calculate checksums."""
+        """Read migration files from disk."""
         if not self.migrations_dir.exists():
             raise FileNotFoundError(f"Migration directory not found: {self.migrations_dir}")
 
@@ -93,21 +58,16 @@ class SQLMigrator:
         migrations: list[MigrationFile] = []
         for path in files:
             sql = path.read_text(encoding="utf-8")
-            checksum = hashlib.sha256(sql.encode("utf-8")).hexdigest()
-            migrations.append(MigrationFile(version=path.name, path=path, checksum=checksum, sql=sql))
+            migrations.append(MigrationFile(version=path.name, path=path, sql=sql))
         return migrations
 
     def _apply_migration(self, migration: MigrationFile) -> None:
-        """Apply one migration in a transaction and record it."""
+        """Apply one migration script in a transaction."""
         log.info("Applying migration | version=%s | path=%s", migration.version, migration.path)
         raw_conn = self.engine.raw_connection()
         try:
             with raw_conn.cursor() as cur:
                 cur.execute(migration.sql)
-                cur.execute(
-                    "INSERT INTO schema_migrations(version, checksum) VALUES (%s, %s)",
-                    (migration.version, migration.checksum),
-                )
             raw_conn.commit()
             log.info("Migration applied | version=%s", migration.version)
         except Exception:
@@ -146,11 +106,11 @@ def main(argv: list[str] | None = None) -> int:
     try:
         applied = run_migrations(migrations_dir=args.migrations_dir)
         if applied:
-            print("Applied migrations:")
+            print("Executed migration scripts:")
             for version in applied:
                 print(f"- {version}")
         else:
-            print("No pending migrations.")
+            print("No SQL scripts found.")
         return 0
     except Exception as exc:
         print(f"Migration failed: {exc}")
