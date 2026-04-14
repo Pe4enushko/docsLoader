@@ -18,6 +18,7 @@ Production-oriented starter implementation for:
 - `app/ingestion` — Tika parsing, cleaning, section normalization, chunking, rule extraction
 - `app/integrations/one_c` — 1C retrieval client and payload parser
 - `app/rag` — retrieval adapter abstraction + PostgreSQL implementation
+  - includes ingestion storage adapter (`postgres` / `mock`) for pipeline testing
 - `app/prompts` — separate prompt builders per check stage
 - `app/services` — visit normalization, flags, classification, diagnosis extraction, rendering, report builder
 - `app/pipelines` — orchestration pipelines:
@@ -95,6 +96,7 @@ python3 scripts/run_guideline_ingestion.py
 ```
 
 Uses env vars: `GUIDELINES_DIR`, `GUIDELINES_GLOB`, `GUIDELINES_RECURSIVE`, `INGEST_CLEAR_PREVIOUS`.
+Optional: `INGESTION_RAG_ADAPTER=postgres|mock`.
 
 Run test ingestion with detailed step-by-step logging and structured error report:
 
@@ -108,11 +110,18 @@ Random batch mode from main ingestion folder/pattern:
 python3 tests/run_test_document_ingestion.py --docs-count 5 --random-seed 42
 ```
 
+Run with mock RAG ingestion adapter (validation/logging only, no SQL writes):
+
+```bash
+python3 tests/run_test_document_ingestion.py --docs-count 3 --rag-adapter mock
+```
+
 Uses args/env:
 - `--source` or `TEST_INGESTION_SOURCE_PATH` (optional; if omitted, random batch mode is used)
 - `--docs-count` or `TEST_INGESTION_DOCS_COUNT`
 - `--random-seed` or `TEST_INGESTION_RANDOM_SEED`
 - `--output` or `TEST_INGESTION_OUTPUT_PATH` (JSON execution report)
+- `--rag-adapter` or `TEST_INGESTION_RAG_ADAPTER` (`postgres` or `mock`)
 
 In random batch mode file selection uses the same source settings as main ingestion:
 - `GUIDELINES_DIR`

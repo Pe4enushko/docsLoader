@@ -4,12 +4,15 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from app.Storage import AuditReportStorage, LLMCheckHistoryStorage
 from app.models.visit import AuditReport, LLMCheckHistory, VisitRecord
 
 
 class AuditRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
+        self.audit_report_storage = AuditReportStorage(session)
+        self.llm_history_storage = LLMCheckHistoryStorage(session)
 
     def create_report(
         self,
@@ -21,8 +24,8 @@ class AuditRepository:
         llm_trace_metadata: dict[str, Any],
         readable_visit_card: str,
     ) -> AuditReport:
-        row = AuditReport(
-            visit_id=visit.id,
+        return self.audit_report_storage.create_report(
+            visit,
             report_json=report_json,
             report_text=report_text,
             status=status,
@@ -30,9 +33,6 @@ class AuditRepository:
             llm_trace_metadata=llm_trace_metadata,
             readable_visit_card=readable_visit_card,
         )
-        self.session.add(row)
-        self.session.flush()
-        return row
 
     def create_llm_history(
         self,
@@ -46,8 +46,8 @@ class AuditRepository:
         token_usage_json: dict[str, Any],
         status: str,
     ) -> LLMCheckHistory:
-        row = LLMCheckHistory(
-            visit_id=visit.id,
+        return self.llm_history_storage.create_history(
+            visit,
             stage=stage,
             prompt_version=prompt_version,
             model=model,
@@ -57,6 +57,3 @@ class AuditRepository:
             token_usage_json=token_usage_json,
             status=status,
         )
-        self.session.add(row)
-        self.session.flush()
-        return row

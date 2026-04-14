@@ -80,6 +80,7 @@ class Settings:
     guidelines_glob: str = os.getenv("GUIDELINES_GLOB", "*.pdf")
     guidelines_recursive: bool = os.getenv("GUIDELINES_RECURSIVE", "true").lower() == "true"
     ingest_clear_previous: bool = os.getenv("INGEST_CLEAR_PREVIOUS", "true").lower() == "true"
+    ingestion_rag_adapter: str = os.getenv("INGESTION_RAG_ADAPTER", "postgres")
 
     # 1C export script settings.
     one_c_date_begin: str = os.getenv("ONE_C_DATE_BEGIN", "")
@@ -100,6 +101,7 @@ class Settings:
     )
     test_ingestion_docs_count: int = int(os.getenv("TEST_INGESTION_DOCS_COUNT", "1"))
     test_ingestion_random_seed: int | None = _optional_int_from_env("TEST_INGESTION_RANDOM_SEED")
+    test_ingestion_rag_adapter: str = os.getenv("TEST_INGESTION_RAG_ADAPTER", os.getenv("INGESTION_RAG_ADAPTER", "postgres"))
 
 
 @lru_cache(maxsize=1)

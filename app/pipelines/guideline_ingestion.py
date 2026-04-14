@@ -26,7 +26,10 @@ from app.ingestion import (
     GuidelineSectionNormalizer,
     TikaClient,
 )
-from app.repositories.guideline_repository import GuidelineRepository
+from app.rag.ingestion_adapter import (
+    GuidelineIngestionAdapter,
+    create_guideline_ingestion_adapter,
+)
 from app.services.embedding import EmbeddingProvider, create_embedding_provider
 from app.logger import get_pipeline_logger
 
@@ -50,13 +53,14 @@ class GuidelineIngestionPipeline:
 
     def __init__(
         self,
-        session: Session,
+        session: Session | None,
         tika_client: TikaClient | None = None,
         cleaner: ClinicalTextCleaner | None = None,
         normalizer: GuidelineSectionNormalizer | None = None,
         chunker: GuidelineChunker | None = None,
         rule_extractor: GuidelineRuleExtractor | None = None,
         embedding_provider: EmbeddingProvider | None = None,
+        ingestion_adapter: GuidelineIngestionAdapter | None = None,
     ) -> None:
         """Wire pipeline dependencies (can be replaced for tests/custom backends)."""
         self.session = session
@@ -66,8 +70,9 @@ class GuidelineIngestionPipeline:
         self.chunker = chunker or GuidelineChunker()
         self.rule_extractor = rule_extractor or GuidelineRuleExtractor()
         self.embedding_provider = embedding_provider or create_embedding_provider()
-        self.repo = GuidelineRepository(session)
+        self.ingestion_adapter = ingestion_adapter or create_guideline_ingestion_adapter(session=session)
         log.info("Guideline ingestion embedding provider initialized | provider=%s", self.embedding_provider.__class__.__name__)
+        log.info("Guideline ingestion storage adapter initialized | adapter=%s", self.ingestion_adapter.__class__.__name__)
 
     def ingest_file(self, source_file: str | Path) -> IngestionResult:
         """Run complete ingestion flow for a single guideline file."""
@@ -99,14 +104,14 @@ class GuidelineIngestionPipeline:
             document = self._run_stage(
                 stage="store_document_sections",
                 source_path=source_path,
-                fn=lambda: self.repo.upsert_document(normalized_doc),
-                details_fn=lambda payload: {"doc_id": str(payload.id), "sections_total": len(payload.sections)},
+                fn=lambda: self.ingestion_adapter.upsert_document(normalized_doc),
+                details_fn=lambda payload: {"doc_id": str(payload.document_id), "sections_total": len(payload.section_refs)},
             )
             self._run_stage(
                 stage="flush_after_document",
                 source_path=source_path,
-                fn=self.session.flush,
-                details_fn=lambda _payload: {"doc_id": str(document.id)},
+                fn=self.ingestion_adapter.flush,
+                details_fn=lambda _payload: {"doc_id": str(document.document_id)},
             )
 
             # Step 2: build chunks and enrich them with embeddings for RAG retrieval.
@@ -135,8 +140,8 @@ class GuidelineIngestionPipeline:
             chunk_rows = self._run_stage(
                 stage="store_chunks",
                 source_path=source_path,
-                fn=lambda: self.repo.add_chunks(document, chunks),
-                details_fn=lambda payload: {"doc_id": str(document.id), "chunks": len(payload)},
+                fn=lambda: self.ingestion_adapter.add_chunks(document, chunks),
+                details_fn=lambda payload: {"doc_id": str(document.document_id), "chunks": len(payload)},
             )
 
             # Step 3: extract structured recommendation rules.
@@ -149,15 +154,15 @@ class GuidelineIngestionPipeline:
             rule_rows = self._run_stage(
                 stage="store_rules",
                 source_path=source_path,
-                fn=lambda: self.repo.add_rules(document, rules),
-                details_fn=lambda payload: {"doc_id": str(document.id), "rules": len(payload)},
+                fn=lambda: self.ingestion_adapter.add_rules(document, rules),
+                details_fn=lambda payload: {"doc_id": str(document.document_id), "rules": len(payload)},
             )
 
             self._run_stage(
                 stage="flush",
                 source_path=source_path,
-                fn=self.session.flush,
-                details_fn=lambda _payload: {"doc_id": str(document.id)},
+                fn=self.ingestion_adapter.flush,
+                details_fn=lambda _payload: {"doc_id": str(document.document_id)},
             )
         except Exception as exc:
             log.exception("Guideline ingestion failed | file=%s | error=%s", source_path, exc)
@@ -166,16 +171,16 @@ class GuidelineIngestionPipeline:
         log.info(
             "Guideline ingestion completed | file=%s | doc_id=%s | sections=%s | chunks=%s | rules=%s | elapsed_ms=%.1f",
             source_path,
-            document.id,
-            len(document.sections),
+            document.document_id,
+            len(document.section_refs),
             len(chunk_rows),
             len(rule_rows),
             (perf_counter() - total_started) * 1000,
         )
 
         return IngestionResult(
-            document_id=document.id,
-            sections_count=len(document.sections),
+            document_id=document.document_id,
+            sections_count=len(document.section_refs),
             chunks_count=len(chunk_rows),
             rules_count=len(rule_rows),
         )

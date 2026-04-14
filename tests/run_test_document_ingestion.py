@@ -39,7 +39,7 @@ from app.ingestion import (
     TikaClient,
 )
 from app.models.db import SessionLocal
-from app.repositories.guideline_repository import GuidelineRepository
+from app.rag.ingestion_adapter import create_guideline_ingestion_adapter
 from app.services.embedding import create_embedding_provider
 from app.logger import configure_logging, get_pipeline_logger
 
@@ -70,19 +70,21 @@ class TestIngestionRunResult:
 class TestDocumentIngestionRunner:
     """Execute one ingestion with explicit stage telemetry and failure tracking."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, rag_adapter_name: str) -> None:
         self.tika_client = TikaClient()
         self.cleaner = ClinicalTextCleaner()
         self.normalizer = GuidelineSectionNormalizer()
         self.chunker = GuidelineChunker()
         self.rule_extractor = GuidelineRuleExtractor()
         self.embedding_provider = create_embedding_provider()
+        self.rag_adapter_name = rag_adapter_name.strip().lower()
         self._active_document_name: str | None = None
         self._active_document_path: str | None = None
         log.info(
-            "Test ingestion runner initialized | embedding_provider=%s | rule_extractor=%s",
+            "Test ingestion runner initialized | embedding_provider=%s | rule_extractor=%s | rag_adapter=%s",
             self.embedding_provider.__class__.__name__,
             self.rule_extractor.__class__.__name__,
+            self.rag_adapter_name,
         )
 
     def run(self, source_path: str) -> TestIngestionRunResult:
@@ -109,8 +111,13 @@ class TestDocumentIngestionRunner:
                 error=f"File not found: {source_file}",
             )
 
-        session = SessionLocal()
-        repo = GuidelineRepository(session)
+        session = SessionLocal() if self.rag_adapter_name == "postgres" else None
+        try:
+            adapter = create_guideline_ingestion_adapter(session=session, adapter_name=self.rag_adapter_name)
+        except Exception:
+            if session is not None:
+                session.close()
+            raise
         self._active_document_name = document_name
         self._active_document_path = str(source_file)
 
@@ -142,10 +149,10 @@ class TestDocumentIngestionRunner:
             document = self._run_step(
                 steps=steps,
                 step_name="store_document_sections",
-                fn=lambda: repo.upsert_document(normalized_doc),
-                details_fn=lambda doc: {"document_id": str(doc.id), "sections_total": len(doc.sections)},
+                fn=lambda: adapter.upsert_document(normalized_doc),
+                details_fn=lambda doc: {"document_id": str(doc.document_id), "sections_total": len(doc.section_refs)},
             )
-            document_id = str(document.id)
+            document_id = str(document.document_id)
 
             chunks = self._run_step(
                 steps=steps,
@@ -172,7 +179,7 @@ class TestDocumentIngestionRunner:
             stored_chunks = self._run_step(
                 steps=steps,
                 step_name="store_chunks",
-                fn=lambda: repo.add_chunks(document, chunks),
+                fn=lambda: adapter.add_chunks(document, chunks),
                 details_fn=lambda rows: {"stored_chunks": len(rows)},
             )
 
@@ -185,20 +192,27 @@ class TestDocumentIngestionRunner:
             stored_rules = self._run_step(
                 steps=steps,
                 step_name="store_rules",
-                fn=lambda: repo.add_rules(document, rules),
+                fn=lambda: adapter.add_rules(document, rules),
                 details_fn=lambda rows: {"stored_rules": len(rows)},
             )
 
             self._run_step(
                 steps=steps,
                 step_name="flush_session",
-                fn=session.flush,
+                fn=adapter.flush,
             )
-            self._run_step(
-                steps=steps,
-                step_name="commit_transaction",
-                fn=session.commit,
-            )
+            if session is not None:
+                self._run_step(
+                    steps=steps,
+                    step_name="commit_transaction",
+                    fn=session.commit,
+                )
+            else:
+                self._record_skipped(
+                    steps,
+                    "commit_transaction",
+                    {"reason": "Mock adapter selected; DB transaction is not used"},
+                )
 
             result = TestIngestionRunResult(
                 source_path=str(source_file),
@@ -218,29 +232,36 @@ class TestDocumentIngestionRunner:
             )
             return result
         except Exception as exc:
-            rollback_started = perf_counter()
-            try:
-                session.rollback()
-                self._record_step(
+            if session is not None:
+                rollback_started = perf_counter()
+                try:
+                    session.rollback()
+                    self._record_step(
+                        steps,
+                        StepRun(
+                            step="rollback_transaction",
+                            status="ok",
+                            elapsed_ms=round((perf_counter() - rollback_started) * 1000, 1),
+                            details={"reason": "Failure in previous step"},
+                        ),
+                    )
+                except Exception as rollback_exc:
+                    self._record_step(
+                        steps,
+                        StepRun(
+                            step="rollback_transaction",
+                            status="error",
+                            elapsed_ms=round((perf_counter() - rollback_started) * 1000, 1),
+                            error=str(rollback_exc),
+                        ),
+                    )
+                    log.exception("Rollback failed after ingestion error | file=%s", source_file)
+            else:
+                self._record_skipped(
                     steps,
-                    StepRun(
-                        step="rollback_transaction",
-                        status="ok",
-                        elapsed_ms=round((perf_counter() - rollback_started) * 1000, 1),
-                        details={"reason": "Failure in previous step"},
-                    ),
+                    "rollback_transaction",
+                    {"reason": "Mock adapter selected; DB transaction is not used"},
                 )
-            except Exception as rollback_exc:
-                self._record_step(
-                    steps,
-                    StepRun(
-                        step="rollback_transaction",
-                        status="error",
-                        elapsed_ms=round((perf_counter() - rollback_started) * 1000, 1),
-                        error=str(rollback_exc),
-                    ),
-                )
-                log.exception("Rollback failed after ingestion error | file=%s", source_file)
 
             result = TestIngestionRunResult(
                 source_path=str(source_file),
@@ -260,7 +281,8 @@ class TestDocumentIngestionRunner:
         finally:
             self._active_document_name = None
             self._active_document_path = None
-            session.close()
+            if session is not None:
+                session.close()
 
     def _run_step(
         self,
@@ -402,6 +424,12 @@ def _build_arg_parser(settings) -> argparse.ArgumentParser:
         default=settings.test_ingestion_output_path,
         help="Path to JSON batch report (or TEST_INGESTION_OUTPUT_PATH)",
     )
+    parser.add_argument(
+        "--rag-adapter",
+        default=settings.test_ingestion_rag_adapter,
+        choices=["postgres", "mock"],
+        help="Ingestion storage adapter for tests: postgres or mock (TEST_INGESTION_RAG_ADAPTER)",
+    )
     return parser
 
 
@@ -414,7 +442,7 @@ def main() -> int:
     source = str(args.source or "").strip()
     output = str(args.output or "").strip()
 
-    runner = TestDocumentIngestionRunner()
+    runner = TestDocumentIngestionRunner(rag_adapter_name=args.rag_adapter)
     started = perf_counter()
 
     if source:
@@ -472,6 +500,7 @@ def main() -> int:
     report_payload = {
         "meta": {
             **selection_meta,
+            "rag_adapter": args.rag_adapter,
             "total": len(results),
             "ok": ok_count,
             "errors": error_count,
