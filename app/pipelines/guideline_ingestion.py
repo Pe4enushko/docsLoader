@@ -28,7 +28,7 @@ from app.ingestion import (
 )
 from app.repositories.guideline_repository import GuidelineRepository
 from app.services.embedding import EmbeddingProvider, create_embedding_provider
-from app.utils.logging import get_pipeline_logger
+from app.logger import get_pipeline_logger
 
 
 log = get_pipeline_logger(__name__, "guideline_ingestion_pipeline.log")

@@ -7,9 +7,12 @@ from sqlalchemy import Enum, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.config import get_settings
 from app.domain.enums import ChunkType, DocumentStatus, RuleType, SectionType
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.types import vector_type
+
+EMBEDDING_VECTOR_DIM = get_settings().embedding_dimension
 
 
 class GuidelineDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -93,7 +96,8 @@ class GuidelineChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     chunk_text: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     order_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    embedding: Mapped[list[float] | None] = mapped_column(vector_type(768))
+    # Must match embedding provider output dimension (configured via EMBEDDING_DIMENSION).
+    embedding: Mapped[list[float] | None] = mapped_column(vector_type(EMBEDDING_VECTOR_DIM))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
     document: Mapped[GuidelineDocument] = relationship(back_populates="chunks")

@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS guideline_chunks (
     chunk_text text NOT NULL,
     token_count integer NOT NULL DEFAULT 0,
     order_index integer NOT NULL DEFAULT 0,
-    embedding vector(768),
+    embedding vector(1024),
     metadata_json jsonb NOT NULL DEFAULT '{}'::jsonb,
     created_at timestamptz NOT NULL DEFAULT now(),
     updated_at timestamptz NOT NULL DEFAULT now(),

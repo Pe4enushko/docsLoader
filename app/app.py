@@ -15,7 +15,7 @@ from app.pipelines.batch_runner import AsyncVisitBatchRunner
 from app.pipelines.guideline_ingestion import GuidelineIngestionPipeline, IngestionResult
 from app.pipelines.visit_audit import VisitAuditPipeline, VisitAuditResult
 from app.rag.postgres_adapter import PostgresRetrievalAdapter
-from app.utils.logging import configure_logging, get_logger
+from app.logger import configure_logging, get_logger
 from app.utils.migrate import run_migrations
 
 

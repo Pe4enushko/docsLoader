@@ -18,7 +18,7 @@ from app.ingestion.rule_extractor import GuidelineRuleExtractor
 from app.ingestion.section_normalizer import GuidelineSectionNormalizer
 from app.ingestion.tika_client import TikaClient
 from app.repositories.normative_repository import NormativeRepository
-from app.utils.logging import get_pipeline_logger
+from app.logger import get_pipeline_logger
 from app.utils.text import stable_hash
 
 

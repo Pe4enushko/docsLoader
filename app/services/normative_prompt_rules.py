@@ -12,7 +12,7 @@ from pathlib import Path
 from app.config import get_settings
 from app.domain.enums import VisitType
 from app.schemas.normative_prompt_rules import NormativePromptRule
-from app.utils.logging import get_logger
+from app.logger import get_logger
 
 
 log = get_logger(__name__)

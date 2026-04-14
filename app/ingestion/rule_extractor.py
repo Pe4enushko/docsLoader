@@ -17,7 +17,7 @@ from app.config import get_settings
 from app.domain.enums import RuleType
 from app.schemas.knowledge import NormalizedGuidelineDocument, RuleCandidate
 from app.services.llm_client import LLMClient, create_llm_client
-from app.utils.logging import get_logger
+from app.logger import get_logger
 from app.utils.text import stable_hash
 
 

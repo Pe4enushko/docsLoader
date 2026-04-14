@@ -18,7 +18,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import logging
 
-from app.utils.logging import configure_logging, get_logger
+from app.logger import configure_logging, get_logger
 
 
 configure_logging()

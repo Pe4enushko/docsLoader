@@ -41,7 +41,7 @@ from app.ingestion import (
 from app.models.db import SessionLocal
 from app.repositories.guideline_repository import GuidelineRepository
 from app.services.embedding import create_embedding_provider
-from app.utils.logging import configure_logging, get_pipeline_logger
+from app.logger import configure_logging, get_pipeline_logger
 
 
 configure_logging()

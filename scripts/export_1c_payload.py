@@ -23,7 +23,7 @@ import logging
 
 from app.config import get_settings
 from app.integrations.one_c import OneCClient, parse_appointments_payload
-from app.utils.logging import configure_logging, get_logger
+from app.logger import configure_logging, get_logger
 
 
 DATE_FMT = "%d.%m.%Y"

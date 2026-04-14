@@ -14,7 +14,7 @@ from typing import Any
 import requests
 
 from app.config import get_settings
-from app.utils.logging import get_logger
+from app.logger import get_logger
 
 try:
     from openai import OpenAI

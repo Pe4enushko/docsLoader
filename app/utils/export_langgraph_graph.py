@@ -15,7 +15,7 @@ from app.config import get_settings
 from app.models.db import SessionLocal
 from app.pipelines.visit_audit import VisitAuditPipeline
 from app.rag.postgres_adapter import PostgresRetrievalAdapter
-from app.utils.logging import configure_logging, get_pipeline_logger
+from app.logger import configure_logging, get_pipeline_logger
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:

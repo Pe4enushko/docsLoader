@@ -51,7 +51,7 @@ class Settings:
 
     embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "openai")
     embedding_model: str = os.getenv("OPENAI_EMBEDDING_MODEL", os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
-    embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "1536"))
+    embedding_dimension: int = int(os.getenv("EMBEDDING_DIMENSION", "1024"))
     embedding_timeout_seconds: int = int(os.getenv("EMBEDDING_TIMEOUT_SECONDS", "60"))
     ollama_embed_base_url: str = os.getenv("OLLAMA_EMBED_BASE_URL", "http://localhost:11434")
     ollama_embed_model: str = os.getenv("OLLAMA_EMBED_MODEL", "nomic-embed-text")

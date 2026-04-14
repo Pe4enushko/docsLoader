@@ -16,7 +16,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 
 from app.config import get_settings
-from app.utils.logging import configure_logging, get_logger
+from app.logger import configure_logging, get_logger
 
 
 log = get_logger(__name__)

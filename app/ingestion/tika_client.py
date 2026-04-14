@@ -5,7 +5,7 @@ from pathlib import Path
 import requests
 
 from app.config import get_settings
-from app.utils.logging import get_logger
+from app.logger import get_logger
 from app.utils.text import fix_mojibake
 
 

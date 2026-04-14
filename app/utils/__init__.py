@@ -1,1 +1,1 @@
-"""Utility package for logging, text helpers and migration runner."""
+"""Utility package for text helpers and migration runner."""

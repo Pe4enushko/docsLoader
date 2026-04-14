@@ -36,7 +36,7 @@ from app.services.renderers import VisitRenderer
 from app.services.report_builder import AuditReportBuilder
 from app.services.visit_classifier import VisitTypeClassifier
 from app.services.visit_normalizer import VisitNormalizer
-from app.utils.logging import get_pipeline_logger
+from app.logger import get_pipeline_logger
 
 
 log = get_pipeline_logger(__name__, "visit_audit_pipeline.log")

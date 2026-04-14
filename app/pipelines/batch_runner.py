@@ -17,7 +17,7 @@ from app.integrations.one_c.parser import extract_visit_guid
 from app.pipelines.visit_audit import VisitAuditPipeline, VisitAuditResult
 from app.rag.postgres_adapter import PostgresRetrievalAdapter
 from app.rag.retrieval_adapter import RetrievalAdapter
-from app.utils.logging import get_pipeline_logger
+from app.logger import get_pipeline_logger
 
 
 log = get_pipeline_logger(__name__, "visit_batch_runner.log")
