@@ -71,6 +71,20 @@ class ReportStatus(str, Enum):
 
 
 class LLMCheckStage(str, Enum):
+    """LLM audit stages executed sequentially in visit pipeline.
+
+    FORMAL_STRUCTURE_CHECK:
+    - checks required blocks/fields completeness and obvious structural mismatches.
+    DIAGNOSIS_CONSISTENCY_CHECK:
+    - verifies diagnosis wording/codes against complaints/objective findings/context.
+    MANAGEMENT_CONSISTENCY_CHECK:
+    - validates treatment/investigation plan against diagnosis and guideline context.
+    FOLLOWUP_CHECK:
+    - assesses adequacy of dynamic follow-up timeline and next-visit recommendations.
+    DOCUMENTATION_QUALITY_CHECK:
+    - evaluates clinical documentation quality, clarity and medico-legal sufficiency.
+    """
+
     FORMAL_STRUCTURE_CHECK = "formal_structure_check"
     DIAGNOSIS_CONSISTENCY_CHECK = "diagnosis_consistency_check"
     MANAGEMENT_CONSISTENCY_CHECK = "management_consistency_check"

@@ -24,6 +24,7 @@ from app.services.llm_client import (
     create_llm_backend,
     create_llm_client,
 )
+from app.services.normative_prompt_rules import NormativePromptRuleProvider
 from app.services.renderers import VisitRenderer
 from app.services.report_builder import AuditReportBuilder
 from app.services.visit_classifier import VisitTypeClassifier
@@ -48,6 +49,7 @@ __all__ = [
     "OllamaLLMClient",
     "create_llm_backend",
     "create_llm_client",
+    "NormativePromptRuleProvider",
     "VisitNormalizer",
     "VisitHeuristicFlagger",
     "VisitTypeClassifier",

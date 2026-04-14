@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -10,7 +12,7 @@ class JobRepository:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def enqueue(self, job_type: str, entity_id: str, payload: dict | None = None) -> ProcessingJob:
+    def enqueue(self, job_type: str, entity_id: UUID, payload: dict | None = None) -> ProcessingJob:
         row = ProcessingJob(job_type=job_type, entity_id=entity_id, status="queued", payload=payload or {})
         self.session.add(row)
         self.session.flush()

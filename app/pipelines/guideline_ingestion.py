@@ -13,6 +13,7 @@ Pipeline responsibilities:
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -25,17 +26,17 @@ from app.ingestion import (
 )
 from app.repositories.guideline_repository import GuidelineRepository
 from app.services.embedding import EmbeddingProvider, create_embedding_provider
-from app.utils.logging import get_logger
+from app.utils.logging import get_pipeline_logger
 
 
-log = get_logger(__name__)
+log = get_pipeline_logger(__name__, "guideline_ingestion_pipeline.log")
 
 
 @dataclass(slots=True)
 class IngestionResult:
     """Summary of stored artifacts after one ingestion run."""
 
-    document_id: str
+    document_id: UUID
     sections_count: int
     chunks_count: int
     rules_count: int
@@ -182,7 +183,7 @@ class GuidelineIngestionPipeline:
         )
 
         return IngestionResult(
-            document_id=str(document.id),
+            document_id=document.id,
             sections_count=len(document.sections),
             chunks_count=len(chunk_rows),
             rules_count=len(rule_rows),

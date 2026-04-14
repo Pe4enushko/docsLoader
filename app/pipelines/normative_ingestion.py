@@ -9,6 +9,7 @@ sections/rules into dedicated normative tables.
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
+from uuid import UUID
 
 from sqlalchemy.orm import Session
 
@@ -17,18 +18,18 @@ from app.ingestion.rule_extractor import GuidelineRuleExtractor
 from app.ingestion.section_normalizer import GuidelineSectionNormalizer
 from app.ingestion.tika_client import TikaClient
 from app.repositories.normative_repository import NormativeRepository
-from app.utils.logging import get_logger
+from app.utils.logging import get_pipeline_logger
 from app.utils.text import stable_hash
 
 
-log = get_logger(__name__)
+log = get_pipeline_logger(__name__, "normative_ingestion_pipeline.log")
 
 
 @dataclass(slots=True)
 class NormativeIngestionResult:
     """Result summary for one ingested normative source document."""
 
-    document_id: str
+    document_id: UUID
     rules_count: int
 
 
@@ -149,4 +150,4 @@ class NormativeIngestionPipeline:
             (perf_counter() - total_started) * 1000,
         )
 
-        return NormativeIngestionResult(document_id=str(document.id), rules_count=len(rule_rows))
+        return NormativeIngestionResult(document_id=document.id, rules_count=len(rule_rows))

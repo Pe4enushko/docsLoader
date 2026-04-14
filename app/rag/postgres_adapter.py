@@ -2,16 +2,16 @@ from __future__ import annotations
 
 """PostgreSQL-based retrieval adapter.
 
-Builds stage-aware context by selecting guideline rules, normative rules and raw
-chunks from SQL storage. The output shape matches `RetrievalContext` and is
-ready to inject into prompt builders.
+Builds stage-aware context by selecting guideline rules and raw chunks from SQL
+storage. The output shape matches `RetrievalContext` and is ready to inject
+into prompt builders.
 """
 
 from sqlalchemy import Select, or_, select
 from sqlalchemy.orm import Session
 
 from app.domain.enums import RuleType
-from app.models.knowledge import GuidelineChunk, GuidelineRule, NormativeRule
+from app.models.knowledge import GuidelineChunk, GuidelineRule
 from app.rag.retrieval_adapter import RetrievalAdapter
 from app.schemas.retrieval import ChunkRef, RetrievalContext, RetrievalQuery, RuleRef
 
@@ -35,23 +35,17 @@ class PostgresRetrievalAdapter(RetrievalAdapter):
     def retrieve_context(self, query: RetrievalQuery) -> RetrievalContext:
         """Fetch and merge all context components for one stage request."""
         guideline_rules = self._fetch_guideline_rules(query)
-        normative_rules = self._fetch_normative_rules(query)
         chunks = self._fetch_chunks(query)
 
-        merged_context = self._build_context(guideline_rules, normative_rules, chunks)
+        merged_context = self._build_context(guideline_rules, chunks)
         references = [
             {"type": "guideline_rule", "id": str(item.rule_id), "source": item.source}
             for item in guideline_rules
         ]
-        references.extend(
-            {"type": "normative_rule", "id": str(item.rule_id), "source": item.source}
-            for item in normative_rules
-        )
         references.extend({"type": "chunk", "id": str(item.chunk_id), "source": item.source} for item in chunks)
 
         return RetrievalContext(
             selected_guideline_rules=guideline_rules,
-            selected_normative_rules=normative_rules,
             relevant_raw_chunks=chunks,
             short_merged_context=merged_context,
             references_metadata=references,
@@ -68,22 +62,6 @@ class PostgresRetrievalAdapter(RetrievalAdapter):
                 rule_id=row.id,
                 statement=row.statement,
                 source="guideline",
-                source_section=row.source_section,
-            )
-            for row in rows
-        ]
-
-    def _fetch_normative_rules(self, query: RetrievalQuery) -> list[RuleRef]:
-        """Fetch normative rules filtered by diagnosis and check stage."""
-        stmt: Select = select(NormativeRule).limit(max(3, query.max_chunks // 2))
-        stmt = self._apply_rule_filters(stmt, NormativeRule.statement, NormativeRule.rule_type, query)
-        rows = self.session.scalars(stmt).all()
-
-        return [
-            RuleRef(
-                rule_id=row.id,
-                statement=row.statement,
-                source="normative",
                 source_section=row.source_section,
             )
             for row in rows
@@ -124,7 +102,6 @@ class PostgresRetrievalAdapter(RetrievalAdapter):
     def _build_context(
         self,
         guideline_rules: list[RuleRef],
-        normative_rules: list[RuleRef],
         chunks: list[ChunkRef],
     ) -> str:
         """Compose concise merged context block for prompt injection."""
@@ -133,10 +110,6 @@ class PostgresRetrievalAdapter(RetrievalAdapter):
         if guideline_rules:
             parts.append("Guideline rules:")
             parts.extend(f"- {item.statement}" for item in guideline_rules[:4])
-
-        if normative_rules:
-            parts.append("Normative rules:")
-            parts.extend(f"- {item.statement}" for item in normative_rules[:3])
 
         if chunks:
             parts.append("Relevant excerpts:")

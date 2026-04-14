@@ -2,27 +2,30 @@ from __future__ import annotations
 
 """High-level programmatic entry points for app initialization and pipelines."""
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import delete
 
 from app.config import get_settings
-from app.models import Base
-from app.models.db import SessionLocal, engine, get_db_session
+from app.models.db import SessionLocal, get_db_session
 from app.models.knowledge import GuidelineDocument
+from app.pipelines.batch_runner import AsyncVisitBatchRunner
 from app.pipelines.guideline_ingestion import GuidelineIngestionPipeline, IngestionResult
 from app.pipelines.visit_audit import VisitAuditPipeline, VisitAuditResult
 from app.rag.postgres_adapter import PostgresRetrievalAdapter
-from app.utils.logging import get_logger
+from app.utils.logging import configure_logging, get_logger
+from app.utils.migrate import run_migrations
 
 
+configure_logging()
 log = get_logger(__name__)
 
 
 def init_db() -> None:
-    """Create all tables from ORM metadata (useful for local bootstrapping)."""
-    Base.metadata.create_all(bind=engine)
+    """Apply SQL migrations from `sql/migrations`."""
+    run_migrations()
 
 
 def ingest_guideline(source_file: str | Path) -> IngestionResult:
@@ -87,3 +90,38 @@ def audit_visit(raw_visit: dict[str, Any], external_id: str | None = None) -> Vi
         retrieval = PostgresRetrievalAdapter(session)
         pipeline = VisitAuditPipeline(session=session, retrieval_adapter=retrieval)
         return pipeline.process_one(raw_visit=raw_visit, external_id=external_id)
+
+
+async def audit_visits_batch_async(
+    visits: list[dict[str, Any]],
+    *,
+    max_concurrency: int = 4,
+    continue_on_error: bool = True,
+) -> list[dict[str, Any]]:
+    """Audit a batch asynchronously with isolated sessions per task."""
+    runner = AsyncVisitBatchRunner(session_factory=SessionLocal)
+    return await runner.process_batch_async(
+        visits=visits,
+        max_concurrency=max_concurrency,
+        continue_on_error=continue_on_error,
+    )
+
+
+def audit_visits_batch(
+    visits: list[dict[str, Any]],
+    *,
+    max_concurrency: int = 4,
+    continue_on_error: bool = True,
+) -> list[dict[str, Any]]:
+    """Synchronous wrapper over async batch API."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(
+            audit_visits_batch_async(
+                visits=visits,
+                max_concurrency=max_concurrency,
+                continue_on_error=continue_on_error,
+            )
+        )
+    raise RuntimeError("audit_visits_batch cannot run inside active event loop. Use audit_visits_batch_async instead.")

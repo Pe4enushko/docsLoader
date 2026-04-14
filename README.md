@@ -21,15 +21,16 @@ Production-oriented starter implementation for:
 - `app/prompts` — separate prompt builders per check stage
 - `app/services` — visit normalization, flags, classification, diagnosis extraction, rendering, report builder
 - `app/pipelines` — orchestration pipelines:
-  - `GuidelineIngestionPipeline`
-  - `NormativeIngestionPipeline`
-  - `VisitAuditPipeline`
-- `alembic` — migration environment and initial schema
+  - `GuidelineIngestionPipeline` (logs: `logs/guideline_ingestion_pipeline.log`)
+  - `NormativeIngestionPipeline` (logs: `logs/normative_ingestion_pipeline.log`)
+  - `VisitAuditPipeline` (LangGraph state machine, logs: `logs/visit_audit_pipeline.log`)
+- `sql/migrations` — plain SQL migration files
+- `app/utils/migrate.py` — SQL migration runner
 - `tests` — baseline tests for core contracts
 
 ## Database
 
-Initial migration: `alembic/versions/20260413_000001_init_mvp_schema.py`
+Migration source: `sql/migrations/*.sql` (applied by `python3 -m app.utils.migrate`)
 
 Main tables:
 
@@ -49,7 +50,8 @@ cp .env.example .env
 
 Set at least:
 
-- `DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_USER`, `DATABASE_PASSWORD`, `DATABASE_NAME`
+- `DATABASE_URL` (example: `postgresql+psycopg://user:pass@localhost:5432/med_audit`)
+- `LOG_TO_FILES`, `LOG_DIR` (for file logging)
 - `OPENAI_API_KEY`
 - `LLM_PROVIDER` (`openai` or `ollama`)
 - `OPENAI_LLM_MODEL` (if `LLM_PROVIDER=openai`) or `OLLAMA_CHAT_MODEL` (if `LLM_PROVIDER=ollama`)
@@ -67,7 +69,7 @@ pip install -r requirements.txt
 3. Run migrations:
 
 ```bash
-alembic upgrade head
+python3 -m app.utils.migrate
 ```
 
 4. Run tests:
@@ -94,6 +96,29 @@ python3 scripts/run_guideline_ingestion.py
 
 Uses env vars: `GUIDELINES_DIR`, `GUIDELINES_GLOB`, `GUIDELINES_RECURSIVE`, `INGEST_CLEAR_PREVIOUS`.
 
+Run test ingestion with detailed step-by-step logging and structured error report:
+
+```bash
+python3 scripts/run_test_document_ingestion.py --source docs/example.pdf
+```
+
+Random batch mode from main ingestion folder/pattern:
+
+```bash
+python3 scripts/run_test_document_ingestion.py --docs-count 5 --random-seed 42
+```
+
+Uses args/env:
+- `--source` or `TEST_INGESTION_SOURCE_PATH` (optional; if omitted, random batch mode is used)
+- `--docs-count` or `TEST_INGESTION_DOCS_COUNT`
+- `--random-seed` or `TEST_INGESTION_RANDOM_SEED`
+- `--output` or `TEST_INGESTION_OUTPUT_PATH` (JSON execution report)
+
+In random batch mode file selection uses the same source settings as main ingestion:
+- `GUIDELINES_DIR`
+- `GUIDELINES_GLOB`
+- `GUIDELINES_RECURSIVE`
+
 Run audit pipeline on test data file and export batch results to JSON:
 
 ```bash
@@ -101,13 +126,20 @@ python3 scripts/run_test_data_audit.py
 ```
 
 Uses env vars: `TEST_DATA_INPUT_PATH`, `TEST_DATA_OUTPUT_PATH`, `TEST_DATA_CONTINUE_ON_ERROR`.
+Also supports `TEST_DATA_BATCH_CONCURRENCY` for async batch parallelism.
+
+Export LangGraph schema of visit audit pipeline to PNG:
+
+```bash
+python3 -m app.utils.export_langgraph_graph --output graph_schema.png
+```
 
 ## Programmatic usage
 
 ```python
-from app.app import audit_visit, ingest_all_guidelines_from_env, init_db
+from app.app import audit_visit, audit_visits_batch, ingest_all_guidelines_from_env, init_db
 
-init_db()  # optional if you don't use Alembic yet
+init_db()  # applies SQL migrations from sql/migrations
 results = ingest_all_guidelines_from_env()
 
 visit_payload = {
@@ -119,6 +151,12 @@ visit_payload = {
 }
 
 report_result = audit_visit(visit_payload, external_id="visit-123")
+
+batch_results = audit_visits_batch(
+    [visit_payload],
+    max_concurrency=4,
+    continue_on_error=True,
+)
 ```
 
 ## Current status
@@ -131,4 +169,5 @@ This is an MVP-ready skeleton designed for extension:
 - LLM provider is selectable by env (`openai` or `ollama`, classes `OpenAILLMClient` / `OllamaLLMClient`),
 - rule extraction from guidelines is LLM-assisted with heuristic fallback,
 - prompts are modular and versioned by stage,
-- normalization and extraction use robust heuristics with unknown fallbacks.
+- normalization and extraction use robust heuristics with unknown fallbacks,
+- single-visit audit flow is represented as explicit LangGraph nodes with intermediate state persisted per node.

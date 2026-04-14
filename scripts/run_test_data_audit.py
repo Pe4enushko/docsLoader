@@ -7,9 +7,11 @@ Environment variables:
 - TEST_DATA_INPUT_PATH
 - TEST_DATA_OUTPUT_PATH
 - TEST_DATA_CONTINUE_ON_ERROR
+- TEST_DATA_BATCH_CONCURRENCY
 """
 
 import json
+import asyncio
 import sys
 import time
 import logging
@@ -21,7 +23,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app.config import get_settings
-from app.integrations.one_c import extract_visit_guid, parse_appointments_payload
+from app.integrations.one_c import parse_appointments_payload
 from app.utils.logging import configure_logging, get_logger
 
 
@@ -89,62 +91,25 @@ def main() -> int:
     log.info("Input visits resolved | count=%s", len(visits))
 
     try:
-        from app.models.db import SessionLocal
-        from app.pipelines.visit_audit import VisitAuditPipeline
-        from app.rag.postgres_adapter import PostgresRetrievalAdapter
+        from app.app import audit_visits_batch_async
     except ModuleNotFoundError as exc:
         log.exception("Script failed during imports")
         print(f"Missing dependency: {exc}. Run 'pip install -r requirements.txt'.")
         return 1
 
     started = time.time()
-    items: list[dict[str, Any]] = []
-    log.info("Starting batch processing")
-
-    with SessionLocal() as session:
-        log.info("Creating retrieval adapter and visit audit pipeline")
-        retrieval = PostgresRetrievalAdapter(session)
-        pipeline = VisitAuditPipeline(session=session, retrieval_adapter=retrieval)
-
-        for idx, visit in enumerate(visits, start=1):
-            external_id = extract_visit_guid(visit) or str(visit.get("id") or visit.get("guid") or "") or None
-            log.info("Visit processing started | index=%s/%s | external_id=%s", idx, len(visits), external_id)
-            try:
-                result = pipeline.process_one(raw_visit=visit, external_id=external_id)
-                session.commit()
-                items.append(
-                    {
-                        "index": idx,
-                        "external_id": external_id,
-                        "status": "ok",
-                        "visit_id": result.visit_id,
-                        "report_id": result.report_id,
-                        "pipeline_status": result.status,
-                    }
-                )
-                log.info(
-                    "Visit processing completed | index=%s/%s | external_id=%s | visit_id=%s | report_id=%s | status=%s",
-                    idx,
-                    len(visits),
-                    external_id,
-                    result.visit_id,
-                    result.report_id,
-                    result.status,
-                )
-            except Exception as exc:
-                session.rollback()
-                items.append(
-                    {
-                        "index": idx,
-                        "external_id": external_id,
-                        "status": "error",
-                        "error": str(exc),
-                    }
-                )
-                log.exception("Visit processing failed | index=%s/%s | external_id=%s", idx, len(visits), external_id)
-                if not settings.test_data_continue_on_error:
-                    log.warning("Batch stopped due to TEST_DATA_CONTINUE_ON_ERROR=false")
-                    break
+    log.info(
+        "Starting async batch processing | visits=%s | concurrency=%s",
+        len(visits),
+        settings.test_data_batch_concurrency,
+    )
+    items = asyncio.run(
+        audit_visits_batch_async(
+            visits=visits,
+            max_concurrency=settings.test_data_batch_concurrency,
+            continue_on_error=settings.test_data_continue_on_error,
+        )
+    )
 
     ok_count = sum(1 for item in items if item.get("status") == "ok")
     err_count = sum(1 for item in items if item.get("status") == "error")

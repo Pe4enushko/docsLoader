@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Enum, ForeignKey, Integer, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -13,22 +13,33 @@ from app.models.types import vector_type
 
 
 class GuidelineDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Clinical guideline source document metadata and ingestion status."""
+
     __tablename__ = "guideline_documents"
 
-    title: Mapped[str] = mapped_column(String(1024), nullable=False)
-    source_path: Mapped[str] = mapped_column(String(2048), nullable=False)
-    checksum: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    # Human-readable title of guideline.
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    # Original file path used for ingestion.
+    source_path: Mapped[str] = mapped_column(Text, nullable=False)
+    # File checksum for deduplication and idempotent ingestion.
+    checksum: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
 
-    icd10_codes: Mapped[list[str]] = mapped_column(ARRAY(String(16)), default=list, nullable=False)
-    age_group: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # ICD-10 codes associated with this guideline.
+    icd10_codes: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
+    # Age segment from title page metadata.
+    age_group: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Publication/update year when available.
     publication_year: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    developer: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Organization/authoring body.
+    developer: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Ingestion lifecycle status.
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus, name="guideline_document_status", native_enum=False),
         default=DocumentStatus.DRAFT,
         nullable=False,
     )
 
+    # Extra parser metadata (title page, parser diagnostics, etc.).
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
     sections: Mapped[list[GuidelineSection]] = relationship(back_populates="document", cascade="all, delete-orphan")
@@ -37,6 +48,8 @@ class GuidelineDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class GuidelineSection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Normalized hierarchical section/subsection of a clinical guideline."""
+
     __tablename__ = "guideline_sections"
 
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("guideline_documents.id", ondelete="CASCADE"), nullable=False)
@@ -47,7 +60,7 @@ class GuidelineSection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         default=SectionType.UNKNOWN,
         nullable=False,
     )
-    section_title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    section_title: Mapped[str] = mapped_column(Text, nullable=False)
     level: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     order_index: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     page_from: Mapped[int | None] = mapped_column(Integer)
@@ -65,6 +78,8 @@ class GuidelineSection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class GuidelineChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """RAG-ready text chunk linked to guideline document/section."""
+
     __tablename__ = "guideline_chunks"
 
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("guideline_documents.id", ondelete="CASCADE"), nullable=False)
@@ -87,15 +102,17 @@ class GuidelineChunk(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class GuidelineRule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Structured rule extracted from guideline text (LLM-assisted + heuristic)."""
+
     __tablename__ = "guideline_rules"
 
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("guideline_documents.id", ondelete="CASCADE"), nullable=False)
     section_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("guideline_sections.id", ondelete="SET NULL"))
     chunk_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("guideline_chunks.id", ondelete="SET NULL"))
 
-    topic: Mapped[str] = mapped_column(String(256), nullable=False)
-    population: Mapped[str | None] = mapped_column(String(256))
-    specialty: Mapped[str | None] = mapped_column(String(128))
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
+    population: Mapped[str | None] = mapped_column(Text)
+    specialty: Mapped[str | None] = mapped_column(Text)
     rule_type: Mapped[RuleType] = mapped_column(
         Enum(RuleType, name="guideline_rule_type", native_enum=False),
         default=RuleType.OTHER,
@@ -103,12 +120,12 @@ class GuidelineRule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     statement: Mapped[str] = mapped_column(Text, nullable=False)
-    conditions: Mapped[list[str]] = mapped_column(ARRAY(String(512)), default=list, nullable=False)
-    triggers: Mapped[list[str]] = mapped_column(ARRAY(String(512)), default=list, nullable=False)
-    audit_targets: Mapped[list[str]] = mapped_column(ARRAY(String(512)), default=list, nullable=False)
+    conditions: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
+    triggers: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
+    audit_targets: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
 
     source_quote: Mapped[str | None] = mapped_column(Text)
-    source_section: Mapped[str | None] = mapped_column(String(1024))
+    source_section: Mapped[str | None] = mapped_column(Text)
 
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
@@ -118,13 +135,15 @@ class GuidelineRule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class NormativeDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Normative/legal document metadata used by audit rules layer."""
+
     __tablename__ = "normative_documents"
 
-    title: Mapped[str] = mapped_column(String(1024), nullable=False)
-    source_path: Mapped[str] = mapped_column(String(2048), nullable=False)
-    checksum: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
-    issuer: Mapped[str | None] = mapped_column(String(256))
-    effective_date: Mapped[str | None] = mapped_column(String(64))
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    source_path: Mapped[str] = mapped_column(Text, nullable=False)
+    checksum: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    issuer: Mapped[str | None] = mapped_column(Text)
+    effective_date: Mapped[str | None] = mapped_column(Text)
     status: Mapped[DocumentStatus] = mapped_column(
         Enum(DocumentStatus, name="normative_document_status", native_enum=False),
         default=DocumentStatus.DRAFT,
@@ -137,12 +156,14 @@ class NormativeDocument(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class NormativeSection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Normalized section hierarchy for normative documents."""
+
     __tablename__ = "normative_sections"
 
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("normative_documents.id", ondelete="CASCADE"), nullable=False)
     parent_section_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("normative_sections.id", ondelete="CASCADE"))
 
-    section_title: Mapped[str] = mapped_column(String(1024), nullable=False)
+    section_title: Mapped[str] = mapped_column(Text, nullable=False)
     section_type: Mapped[SectionType] = mapped_column(
         Enum(SectionType, name="normative_section_type", native_enum=False),
         default=SectionType.UNKNOWN,
@@ -162,22 +183,24 @@ class NormativeSection(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class NormativeRule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Structured compliance rule extracted from normative sections."""
+
     __tablename__ = "normative_rules"
 
     document_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("normative_documents.id", ondelete="CASCADE"), nullable=False)
     section_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("normative_sections.id", ondelete="SET NULL"))
 
-    topic: Mapped[str] = mapped_column(String(256), nullable=False)
+    topic: Mapped[str] = mapped_column(Text, nullable=False)
     rule_type: Mapped[RuleType] = mapped_column(
         Enum(RuleType, name="normative_rule_type", native_enum=False),
         default=RuleType.OTHER,
         nullable=False,
     )
     statement: Mapped[str] = mapped_column(Text, nullable=False)
-    conditions: Mapped[list[str]] = mapped_column(ARRAY(String(512)), default=list, nullable=False)
-    audit_targets: Mapped[list[str]] = mapped_column(ARRAY(String(512)), default=list, nullable=False)
+    conditions: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
+    audit_targets: Mapped[list[str]] = mapped_column(ARRAY(Text), default=list, nullable=False)
     source_quote: Mapped[str | None] = mapped_column(Text)
-    source_section: Mapped[str | None] = mapped_column(String(1024))
+    source_section: Mapped[str | None] = mapped_column(Text)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSONB, default=dict, nullable=False)
 
     document: Mapped[NormativeDocument] = relationship(back_populates="rules")

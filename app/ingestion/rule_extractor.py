@@ -9,7 +9,7 @@ falls back to conservative heuristic extraction.
 
 import json
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -173,7 +173,7 @@ class GuidelineRuleExtractor:
         )
 
         raw_record: dict[str, Any] = {
-            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "timestamp_utc": datetime.now().isoformat(),
             "section_title": section_title,
             "section_type": section_type,
             "model": self.model,
@@ -371,7 +371,7 @@ class GuidelineRuleExtractor:
             return None
 
         try:
-            timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S_%f")
+            timestamp = datetime.now().strftime("%Y%m%dT%H%M%S_%f")
             file_hash = stable_hash(f"{record.get('section_title', '')}:{record.get('text_fragment_hash', '')}")[:12]
             output_path = self.raw_dir / f"{timestamp}_{file_hash}.json"
             output_path.write_text(json.dumps(record, ensure_ascii=False, indent=2, default=str), encoding="utf-8")

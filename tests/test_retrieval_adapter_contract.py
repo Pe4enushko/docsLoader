@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 
 from app.domain.enums import LLMCheckStage, RuleType, VisitType
-from app.models.knowledge import GuidelineChunk, GuidelineRule, NormativeRule
+from app.models.knowledge import GuidelineChunk, GuidelineRule
 from app.rag.postgres_adapter import PostgresRetrievalAdapter
 from app.schemas.retrieval import RetrievalQuery
 
@@ -35,15 +35,6 @@ def test_retrieval_adapter_contract_returns_structured_context() -> None:
         triggers=[],
         audit_targets=[],
     )
-    normative_rule = NormativeRule(
-        id=uuid.uuid4(),
-        document_id=uuid.uuid4(),
-        topic="Документация",
-        rule_type=RuleType.DOCUMENTATION,
-        statement="Запись должна содержать диагноз и план",
-        conditions=[],
-        audit_targets=[],
-    )
     chunk = GuidelineChunk(
         id=uuid.uuid4(),
         document_id=uuid.uuid4(),
@@ -53,7 +44,7 @@ def test_retrieval_adapter_contract_returns_structured_context() -> None:
         metadata_json={"section_title": "Диагностика"},
     )
 
-    session = _FakeSession([[guideline_rule], [normative_rule], [chunk]])
+    session = _FakeSession([[guideline_rule], [chunk]])
     adapter = PostgresRetrievalAdapter(session)  # type: ignore[arg-type]
 
     query = RetrievalQuery(
@@ -67,6 +58,5 @@ def test_retrieval_adapter_contract_returns_structured_context() -> None:
     context = adapter.retrieve_context(query)
 
     assert context.selected_guideline_rules
-    assert context.selected_normative_rules
     assert context.relevant_raw_chunks
     assert "Guideline rules:" in context.short_merged_context

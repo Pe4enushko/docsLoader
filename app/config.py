@@ -18,6 +18,13 @@ except Exception:  # pragma: no cover
     pass
 
 
+def _optional_int_from_env(name: str) -> int | None:
+    raw_value = os.getenv(name, "").strip()
+    if not raw_value:
+        return None
+    return int(raw_value)
+
+
 @dataclass(slots=True, frozen=True)
 class Settings:
     """Application configuration loaded from environment variables."""
@@ -25,6 +32,9 @@ class Settings:
     app_name: str = os.getenv("APP_NAME", "medical-audit-pipeline")
     app_env: str = os.getenv("APP_ENV", "dev")
     log_level: str = os.getenv("LOG_LEVEL", "INFO").upper()
+    log_to_files: bool = os.getenv("LOG_TO_FILES", "true").lower() == "true"
+    log_dir: str = os.getenv("LOG_DIR", "logs")
+    app_log_file: str = os.getenv("APP_LOG_FILE", "app.log")
 
     database_url: str = os.getenv(
         "DATABASE_URL",
@@ -60,6 +70,10 @@ class Settings:
     rule_extractor_raw_dir: str = os.getenv("RULE_EXTRACTOR_RAW_DIR", "tmp/rule_extractor_raw")
 
     retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "8"))
+    normative_rules_json_path: str = os.getenv(
+        "NORMATIVE_RULES_JSON_PATH",
+        "app/resources/normative_rules.json",
+    )
 
     # Batch ingestion settings.
     guidelines_dir: str = os.getenv("GUIDELINES_DIR", "docs")
@@ -76,6 +90,16 @@ class Settings:
     test_data_input_path: str = os.getenv("TEST_DATA_INPUT_PATH", "tmp/test_visits_input.json")
     test_data_output_path: str = os.getenv("TEST_DATA_OUTPUT_PATH", "tmp/test_visits_output.json")
     test_data_continue_on_error: bool = os.getenv("TEST_DATA_CONTINUE_ON_ERROR", "true").lower() == "true"
+    test_data_batch_concurrency: int = int(os.getenv("TEST_DATA_BATCH_CONCURRENCY", "4"))
+
+    # Single document test ingestion script settings.
+    test_ingestion_source_path: str = os.getenv("TEST_INGESTION_SOURCE_PATH", "")
+    test_ingestion_output_path: str = os.getenv(
+        "TEST_INGESTION_OUTPUT_PATH",
+        "tmp/test_document_ingestion_result.json",
+    )
+    test_ingestion_docs_count: int = int(os.getenv("TEST_INGESTION_DOCS_COUNT", "1"))
+    test_ingestion_random_seed: int | None = _optional_int_from_env("TEST_INGESTION_RANDOM_SEED")
 
 
 @lru_cache(maxsize=1)

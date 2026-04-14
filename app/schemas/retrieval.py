@@ -34,7 +34,6 @@ class ChunkRef(BaseModel):
 
 class RetrievalContext(BaseModel):
     selected_guideline_rules: list[RuleRef] = Field(default_factory=list)
-    selected_normative_rules: list[RuleRef] = Field(default_factory=list)
     relevant_raw_chunks: list[ChunkRef] = Field(default_factory=list)
     short_merged_context: str
     references_metadata: list[dict[str, Any]] = Field(default_factory=list)
