@@ -4,7 +4,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from app.Storage import AuditReportStorage, LLMCheckHistoryStorage
+from app.storage import AuditReportStorage, LLMCheckHistoryStorage
 from app.models.visit import AuditReport, LLMCheckHistory, VisitRecord
 
 

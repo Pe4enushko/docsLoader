@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.Storage import VisitRecordStorage
+from app.storage import VisitRecordStorage
 from app.domain.enums import VisitType
 from app.models.visit import VisitRecord
 

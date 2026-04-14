@@ -5,7 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.Storage import ProcessingJobStorage
+from app.storage import ProcessingJobStorage
 from app.models.visit import ProcessingJob
 
 

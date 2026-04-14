@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from sqlalchemy.orm import Session
 
-from app.Storage import NormativeDocumentStorage, NormativeRuleStorage, NormativeSectionStorage
+from app.storage import NormativeDocumentStorage, NormativeRuleStorage, NormativeSectionStorage
 from app.models.knowledge import NormativeDocument, NormativeRule, NormativeSection
 from app.schemas.knowledge import RuleCandidate
 
