@@ -9,3 +9,4 @@ testjson.json
 *.log
 *.out
 /logs
+parseddata.json
